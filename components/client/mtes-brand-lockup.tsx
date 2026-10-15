@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { APP_VENDOR } from "@/lib/constants";
-import { MtesThemeMark } from "@/components/mtes-theme-mark";
+import { MhmsMark } from "@/components/mhms-mark";
 
-/** Light: MTES in brand blue (#2A3B8F); dark: red (logo accent). “by Constcode” stays theme foreground. */
-const mtesWordClasses = "font-bold text-[#2A3B8F] dark:text-red-500";
+/** Light: MHMS in school brand brown (#7A3818); dark: vibrant school yellow (#FBBF24). */
+const mtesWordClasses = "font-bold text-[#7A3818] dark:text-[#FBBF24]";
 
 type Props = {
   variant?: "hero" | "sidebar" | "header" | "inline";
@@ -17,7 +17,7 @@ type Props = {
 };
 
 /**
- * MTES (blue) + Attandance (theme foreground) + optional centered “by Constcode”.
+ * MHMS (blue) + Attendance + Bemathang, Kargil.
  */
 export function MtesBrandLockup({
   variant = "hero",
@@ -48,22 +48,23 @@ export function MtesBrandLockup({
 
   const wordmark = (
     <span className={titleClass}>
-      <span className={mtesWordClasses}>MTES</span>
-      <span className="text-foreground">Attandance</span>
+      <span className={mtesWordClasses}>MHMS</span>
+      <span className="text-foreground">Attendance</span>
     </span>
   );
 
   /** Hero: centered stack. Nav (header/sidebar/inline): “by Constcode” flush under the end of “Attandance”. */
   const navStack = !isHero;
+  const isLeftAligned = !showLogo && isHeader;
   const byline = showVendor ? (
-    <p className={cn(byClass, navStack ? "text-right" : "text-center")}>by {APP_VENDOR}</p>
+    <p className={cn(byClass, isLeftAligned ? "text-left" : navStack ? "text-right" : "text-center")}>{APP_VENDOR}</p>
   ) : null;
 
   const stackedTitle = (
     <div
       className={cn(
         "inline-flex flex-col",
-        navStack ? "items-end" : "items-center"
+        isLeftAligned ? "items-start" : navStack ? "items-end" : "items-center"
       )}
     >
       {wordmark}
@@ -87,10 +88,7 @@ export function MtesBrandLockup({
     return (
       <div className={cn("flex min-w-0 items-center gap-2.5 md:gap-3", className)}>
         {showLogo ? (
-          <MtesThemeMark
-            className="hidden md:block md:h-[3.35rem] md:w-[3.35rem] shrink-0"
-            size={160}
-          />
+          <MhmsMark className="h-10 w-10 shrink-0 md:h-[3.35rem] md:w-[3.35rem]" />
         ) : null}
         <div className="min-w-0">{stackedTitle}</div>
       </div>
@@ -101,7 +99,7 @@ export function MtesBrandLockup({
     return (
       <div className={cn("flex min-w-0 items-center gap-2.5", className)}>
         {showLogo ? (
-          <MtesThemeMark className="h-[3.25rem] w-[3.25rem] shrink-0 sm:h-14 sm:w-14" size={160} />
+          <MhmsMark className="h-10 w-10 shrink-0 md:h-11 md:w-11" />
         ) : null}
         <div className="min-w-0 flex-1">{stackedTitle}</div>
       </div>
@@ -111,11 +109,7 @@ export function MtesBrandLockup({
   return (
     <div className={cn("flex flex-col items-center text-center", className)}>
       {showLogo ? (
-        <MtesThemeMark
-          className="h-28 w-28 object-contain md:h-32 md:w-32"
-          size={256}
-          priority
-        />
+        <MhmsMark className="h-28 w-28 md:h-32 md:w-32" />
       ) : null}
       <div className={cn("mt-4")}>{stackedTitle}</div>
     </div>

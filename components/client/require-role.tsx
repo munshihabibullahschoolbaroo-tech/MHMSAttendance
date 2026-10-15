@@ -7,7 +7,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { getFirebaseAuth, getFirebaseDb } from "@/lib/firebase/client";
 import { PageLoadingSkeleton } from "@/components/client/dashboard-skeletons";
 
-const SUPER_ADMIN_EMAIL = process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAIL;
+import { getSuperAdminEmail } from "@/lib/constants";
 
 export function RequireRole({
   allowedRoles,
@@ -34,8 +34,9 @@ export function RequireRole({
 
       try {
         const snap = await getDoc(doc(db, "users", u.uid));
-        const role = (snap.data()?.role as string | undefined) ?? undefined;
-        const superRole = SUPER_ADMIN_EMAIL && u.email === SUPER_ADMIN_EMAIL ? "super_admin" : null;
+        const role = (snap.data()?.role as string | undefined) || "employee";
+        const superEmail = getSuperAdminEmail();
+        const superRole = superEmail && u.email?.trim().toLowerCase() === superEmail ? "super_admin" : null;
         const effectiveRole = superRole ?? role;
         if (cancelled) return;
         setReady(true);

@@ -7,7 +7,11 @@ import { join } from "node:path";
 import sharp from "sharp";
 
 const cwd = process.cwd();
-const src = join(cwd, "public", "branding", "mtes-logo.png");
+const src = existsSync(join(cwd, "public", "branding", "mhms-pwa-icon.png"))
+  ? join(cwd, "public", "branding", "mhms-pwa-icon.png")
+  : existsSync(join(cwd, "public", "branding", "mhms-logo.png"))
+  ? join(cwd, "public", "branding", "mhms-logo.png")
+  : join(cwd, "public", "branding", "mtes-logo.png");
 const iconsDir = join(cwd, "public", "icons");
 const appDir = join(cwd, "app");
 
@@ -18,8 +22,8 @@ if (!existsSync(src)) {
 
 mkdirSync(iconsDir, { recursive: true });
 
-/** Matches app manifest / dark chrome. */
-const bg = { r: 10, g: 10, b: 10, alpha: 1 };
+/** Transparent for crisp modern mobile & desktop icons. */
+const bg = { r: 0, g: 0, b: 0, alpha: 0 };
 
 function squareFromLogo(size) {
   return sharp(src).resize(size, size, {

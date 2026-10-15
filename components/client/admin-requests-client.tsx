@@ -1,27 +1,28 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { AdminLoginAccessPanel } from "@/components/client/admin-login-access-panel";
-import { AdminOvertimeRequestsPanel } from "@/components/client/admin-overtime-requests-panel";
-import { AdminOffsiteRequestsPanel } from "@/components/client/admin-offsite-requests-panel";
 import { AdminManualPunchRequestsPanel } from "@/components/client/admin-manual-punch-requests-panel";
+import { AdminClassSwitchRequestsPanel } from "@/components/client/admin-class-switch-requests-panel";
+import { AdminClassAssignmentRequestsPanel } from "@/components/client/admin-class-assignment-requests-panel";
 
-const TABS = ["login", "overtime", "late_checkin", "manual_punch", "offsite"] as const;
+const TABS = ["login", "manual_punch", "class_switch", "class_assignment"] as const;
 type Tab = (typeof TABS)[number];
 
 function normalizeTab(raw: string | null): Tab {
-  if (raw === "overtime" || raw === "late_checkin" || raw === "manual_punch" || raw === "offsite" || raw === "login") return raw;
+  if (raw === "manual_punch" || raw === "login" || raw === "class_switch" || raw === "class_assignment") return raw;
   return "login";
 }
 
 const TAB_LABEL: Record<Tab, string> = {
-  login: "Login access",
-  overtime: "Overtime",
-  late_checkin: "Late Check-in",
-  manual_punch: "Late Request",
-  offsite: "Off-site",
+  login: "Staff Approvals",
+  manual_punch: "Missed Attendance",
+  class_switch: "Class Switch Requests",
+  class_assignment: "Class Teacher Assignments",
 };
 
 export function AdminRequestsClient() {
@@ -39,11 +40,18 @@ export function AdminRequestsClient() {
 
   return (
     <div className="p-3 md:p-8">
-      <div className="mb-6 md:mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Requests</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Login access after onboarding, overtime approvals, late requests, and off-site work — all in one place.
-        </p>
+      <div className="mb-6 md:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Requests & Approvals</h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Review staff onboarding access, missed attendance, and teacher class switch requests.
+          </p>
+        </div>
+        <Button asChild variant="outline" className="shrink-0 gap-2">
+          <Link href="/dashboard/admin/leaves">
+            Review Leave Applications →
+          </Link>
+        </Button>
       </div>
 
       <div
@@ -72,10 +80,9 @@ export function AdminRequestsClient() {
 
       <div role="tabpanel">
         {tab === "login" ? <AdminLoginAccessPanel /> : null}
-        {tab === "overtime" ? <AdminOvertimeRequestsPanel embedded typeFilter="overtime" /> : null}
-        {tab === "late_checkin" ? <AdminOvertimeRequestsPanel embedded typeFilter="late" /> : null}
         {tab === "manual_punch" ? <AdminManualPunchRequestsPanel embedded /> : null}
-        {tab === "offsite" ? <AdminOffsiteRequestsPanel embedded /> : null}
+        {tab === "class_switch" ? <AdminClassSwitchRequestsPanel embedded /> : null}
+        {tab === "class_assignment" ? <AdminClassAssignmentRequestsPanel embedded /> : null}
       </div>
     </div>
   );

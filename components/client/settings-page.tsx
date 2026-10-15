@@ -16,15 +16,20 @@ import { nameToInitials } from "@/lib/profile/initials";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
 import { cn } from "@/lib/utils";
 import { SettingsProfileEditor } from "@/components/client/settings-profile-editor";
+import { AdminOnboardingSettings, SchoolConfigTab } from "@/components/client/admin-onboarding-settings";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input, formFieldLabelClass } from "@/components/ui/input";
 import { formatRoleDisplay, roleBadgeClassNames } from "@/lib/profile/role-badge";
+import { Building2, Layers, MapPin, User as UserIcon } from "lucide-react";
 
 const DELETE_PHRASE = "DELETE MY ACCOUNT";
+
+export type SettingsTabId = "campus" | "sections" | "wings" | "profile";
 
 export function SettingsPage() {
   const router = useRouter();
   const { user, loading } = useDashboardUser();
+  const [activeTab, setActiveTab] = React.useState<SettingsTabId>("campus");
   const [phrase, setPhrase] = React.useState("");
   const [deleteBusy, setDeleteBusy] = React.useState(false);
   const [deleteMsg, setDeleteMsg] = React.useState<string | null>(null);
@@ -60,16 +65,70 @@ export function SettingsPage() {
     }
   };
 
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+
+  const adminTabs: {
+    id: SettingsTabId;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }[] = [
+    { id: "campus", label: "Campus Geofence", icon: MapPin },
+    { id: "sections", label: "Classes & Sections", icon: Layers },
+    { id: "wings", label: "Wings & Roles", icon: Building2 },
+    { id: "profile", label: "Profile & Account", icon: UserIcon },
+  ];
+
   return (
-    <div className="mx-auto max-w-6xl space-y-8 p-3 md:p-8">
+    <div className="mx-auto max-w-6xl space-y-6 p-3 md:p-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Profile, sign-in, and account.
+          Profile, onboarding parameters, and school configuration.
         </p>
       </div>
 
-      <div className="grid gap-4 md:gap-6 lg:grid-cols-3 lg:items-start">
+      {/* Pill Tab Bar Matching User Reference Design */}
+      {isAdmin && (
+        <div className="flex items-center overflow-x-auto pb-1 no-scrollbar">
+          <div className="inline-flex items-center gap-1.5 p-1.5 rounded-full bg-zinc-100/90 dark:bg-zinc-800/80 border border-zinc-200/80 dark:border-zinc-700/60 shadow-xs backdrop-blur-sm">
+            {adminTabs.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    "inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs sm:text-sm font-semibold transition-all shrink-0 cursor-pointer",
+                    isActive
+                      ? "bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900"
+                      : "text-zinc-600 hover:bg-zinc-200/60 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700/60 dark:hover:text-zinc-100"
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Admin School Configuration Tab Content */}
+      {isAdmin && (
+        <div className={activeTab === "profile" ? "hidden" : "block"}>
+          <AdminOnboardingSettings
+            activeTab={activeTab === "profile" ? "campus" : (activeTab as SchoolConfigTab)}
+            onTabChange={(t) => setActiveTab(t)}
+            hideHeaderTabs
+          />
+        </div>
+      )}
+
+      {/* Profile & Account Tab Content */}
+      {(!isAdmin || activeTab === "profile") && (
+        <div className="grid gap-4 md:gap-6 lg:grid-cols-3 lg:items-start">
         <div className="space-y-6 lg:col-span-2">
           <Card>
             <CardHeader>
@@ -129,7 +188,7 @@ export function SettingsPage() {
           </div>
         </div>
 
-        {user?.role === "admin" || user?.role === "super_admin" ? (
+        {isAdmin ? (
           <Card className="border-red-200 dark:border-red-500/25 lg:sticky lg:top-6 lg:self-start">
             <CardHeader>
               <CardTitle className="text-red-700 dark:text-red-400">Danger zone</CardTitle>
@@ -167,7 +226,9 @@ export function SettingsPage() {
             </CardContent>
           </Card>
         ) : null}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
+

@@ -1,9 +1,11 @@
 import type { DecodedIdToken } from "firebase-admin/auth";
 
-/** Server: `SUPER_ADMIN_EMAIL` env (lowercase). */
-export function normalizeSuperAdminEmail(): string | undefined {
+export const DEFAULT_SUPER_ADMIN_EMAIL = "munshihabibullahschoolbaroo@gmail.com";
+
+/** Server: `SUPER_ADMIN_EMAIL` env (lowercase), falling back to school super admin email. */
+export function normalizeSuperAdminEmail(): string {
   const e = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase();
-  return e || undefined;
+  return e || DEFAULT_SUPER_ADMIN_EMAIL;
 }
 
 /** True when the signed-in user is the designated super admin (by email). */

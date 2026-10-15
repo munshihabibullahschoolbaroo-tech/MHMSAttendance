@@ -63,15 +63,8 @@ export function AdminManualPunchRequestsPanel({ embedded = false }: { embedded?:
   }, []);
 
   const loadSites = React.useCallback(async () => {
-    try {
-      const h = await authHeaders();
-      const res = await fetch("/api/sites", { headers: h });
-      const data = (await res.json()) as { sites?: { id: string; name?: string }[] };
-      if (res.ok) setSites(data.sites ?? []);
-    } catch {
-      setSites([]);
-    }
-  }, [authHeaders]);
+    setSites([{ id: "main-campus", name: "Main Campus" }]);
+  }, []);
 
   const load = React.useCallback(async () => {
     setLoading(true);

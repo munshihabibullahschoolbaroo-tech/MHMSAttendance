@@ -27,9 +27,27 @@ export type DashboardUser = {
   wageRate?: number;
   /** Hourly overtime rate */
   overtimeRate?: number;
+  /** School teacher attributes */
+  schoolWingId?: string;
+  position?: string;
+  phone?: string;
+  isClassTeacher?: boolean;
+  schoolClassId?: string;
+  schoolSectionId?: string;
+  pendingClassAssignment?: {
+    wingId?: string;
+    classId?: string;
+    sectionId?: string;
+    reason?: string;
+    requestedAt?: string;
+    status?: "pending" | "approved" | "rejected";
+  } | null;
+  /** Whether the user has completed onboarding (true for existing staff/admins or completed setup) */
+  onboarded?: boolean;
+  onboardingCompletedAt?: string | null;
 };
 
-const SUPER_ADMIN_EMAIL = process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAIL;
+import { getSuperAdminEmail } from "@/lib/constants";
 
 const Ctx = React.createContext<{
   user: DashboardUser | null;
@@ -67,7 +85,8 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
           const data = snap.data();
           const name = (data?.name as string) || email?.split("@")[0] || "User";
           let role = (data?.role as string) || "employee";
-          if (SUPER_ADMIN_EMAIL && email === SUPER_ADMIN_EMAIL) {
+          const superEmail = getSuperAdminEmail();
+          if (superEmail && email?.trim().toLowerCase() === superEmail) {
             role = "super_admin";
           }
           const fsEmail = typeof data?.email === "string" ? data.email : "";
@@ -99,6 +118,12 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
             }
           }
 
+          const onboarded = Boolean(
+            data?.onboarded === true ||
+            data?.onboardingCompletedAt ||
+            (data?.designation && data?.schoolWingId)
+          );
+
           setUser({
             uid: u.uid,
             name,
@@ -112,6 +137,27 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
             salarySheetAccess,
             wageRate,
             overtimeRate,
+            schoolWingId: typeof data?.schoolWingId === "string" ? data.schoolWingId : undefined,
+            position: typeof data?.position === "string" ? data.position : undefined,
+            phone: typeof data?.phone === "string" ? data.phone : undefined,
+            isClassTeacher: data?.isClassTeacher === true,
+            schoolClassId: typeof data?.schoolClassId === "string" ? data.schoolClassId : undefined,
+            schoolSectionId: typeof data?.schoolSectionId === "string" ? data.schoolSectionId : undefined,
+            pendingClassAssignment:
+              data?.pendingClassAssignment && typeof data.pendingClassAssignment === "object"
+                ? {
+                    wingId: data.pendingClassAssignment.wingId,
+                    classId: data.pendingClassAssignment.classId,
+                    sectionId: data.pendingClassAssignment.sectionId,
+                    reason: data.pendingClassAssignment.reason,
+                    requestedAt: data.pendingClassAssignment.requestedAt,
+                    status: data.pendingClassAssignment.status,
+                  }
+                : null,
+            onboarded,
+            onboardingCompletedAt: data?.onboardingCompletedAt
+              ? String(data.onboardingCompletedAt)
+              : null,
           });
           setLoading(false);
         },
@@ -125,7 +171,9 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
                   name: u.email?.split("@")[0] || "User",
                   email: u.email ?? "",
                   role:
-                    SUPER_ADMIN_EMAIL && u.email === SUPER_ADMIN_EMAIL ? "super_admin" : "employee",
+                    u.email && u.email.trim().toLowerCase() === getSuperAdminEmail()
+                      ? "super_admin"
+                      : "employee",
                   designation: "",
                   employeeId: "",
                   workspaceAccessStatus: undefined,

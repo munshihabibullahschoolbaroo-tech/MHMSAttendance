@@ -158,8 +158,8 @@ export function AdminDashboardStats() {
     <div className="grid gap-4 lg:grid-cols-4">
       <Card>
         <CardHeader>
-          <CardTitle>Active workers</CardTitle>
-          <CardDescription>Live GPS pings (&lt; 2 minutes)</CardDescription>
+          <CardTitle>Active on Campus</CardTitle>
+          <CardDescription>Teachers inside school geofence</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-3xl font-semibold">{statSlot(s.activeWorkers)}</div>
@@ -168,8 +168,8 @@ export function AdminDashboardStats() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Check-ins today</CardTitle>
-          <CardDescription>All workers who checked in</CardDescription>
+          <CardTitle>Punched in Today</CardTitle>
+          <CardDescription>All teachers with check-in record</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-3xl font-semibold">{statSlot(s.totalCheckIns)}</div>
@@ -178,8 +178,8 @@ export function AdminDashboardStats() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Completed</CardTitle>
-          <CardDescription>Checked in + checked out</CardDescription>
+          <CardTitle>Day Completed</CardTitle>
+          <CardDescription>Punched in + signed out</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-3xl font-semibold">{statSlot(s.completed)}</div>
@@ -193,8 +193,8 @@ export function AdminDashboardStats() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Late arrivals</CardTitle>
-          <CardDescription>Dev threshold: after 09:00 local</CardDescription>
+          <CardTitle>Late Arrivals</CardTitle>
+          <CardDescription>Arrivals after 09:00 AM</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-3xl font-semibold">{statSlot(s.lateArrivals)}</div>
@@ -210,8 +210,8 @@ export function AdminPendingCheckoutsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Pending check-outs</CardTitle>
-        <CardDescription>Checked in but not checked out yet</CardDescription>
+        <CardTitle>Currently in School</CardTitle>
+        <CardDescription>Punched in and actively in session</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="text-3xl font-semibold">

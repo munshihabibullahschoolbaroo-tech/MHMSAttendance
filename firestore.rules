@@ -11,7 +11,7 @@ service cloud.firestore {
     }
 
     function isSuperAdminEmail() {
-      return signedIn() && tokenEmail() == 'talibhassan1122@gmail.com';
+      return signedIn() && tokenEmail() == 'munshihabibullahschoolbaroo@gmail.com';
     }
 
     function userDoc(uid) {
@@ -106,14 +106,6 @@ service cloud.firestore {
         && resource.data.role == 'employee'
         && request.resource.data.role == 'employee';
 
-      allow update: if signedIn()
-        && isAdmin()
-        && !isSuperAdminEmail()
-        && resource.data.role == 'employee'
-        && request.resource.data.role == 'admin'
-        && request.resource.data.email == resource.data.email
-        && request.resource.data.assignedSites == resource.data.assignedSites;
-
       allow delete: if signedIn() && (request.auth.uid == userId || isSuperAdminEmail());
     }
 
@@ -167,6 +159,46 @@ service cloud.firestore {
         && request.resource.data.workerId == request.auth.uid;
       allow update: if signedIn() && isAdmin();
       allow delete: if false;
+    }
+
+    match /schoolConfig/{id} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /teacherSessions/{id} {
+      allow read: if signedIn() && (
+        resource.data.teacherId == request.auth.uid || isAdmin()
+      );
+      allow write: if false;
+    }
+
+    match /leaveRequests/{id} {
+      allow read: if signedIn() && (
+        resource.data.teacherId == request.auth.uid || isAdmin()
+      );
+      allow write: if false;
+    }
+
+    match /students/{id} {
+      allow read: if signedIn() && (
+        isAdmin() ||
+        (
+          userExists(request.auth.uid)
+          && userDoc(request.auth.uid).data.isClassTeacher == true
+          && resource.data.wingId == userDoc(request.auth.uid).data.schoolWingId
+          && resource.data.classId == userDoc(request.auth.uid).data.schoolClassId
+          && resource.data.sectionId == userDoc(request.auth.uid).data.schoolSectionId
+        )
+      );
+      allow write: if false;
+    }
+
+    match /studentAttendance/{id} {
+      allow read: if signedIn() && (
+        isAdmin() || resource.data.markedBy == request.auth.uid
+      );
+      allow write: if false;
     }
 
     match /{document=**} {

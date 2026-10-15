@@ -24,7 +24,7 @@ export function BasemapLayerControl({
   return (
     <div
       className={cn(
-        "absolute right-2 top-2 z-[1000] flex overflow-hidden rounded-lg text-xs shadow-lg backdrop-blur-sm",
+        "absolute right-2 top-2 z-[20] flex overflow-hidden rounded-lg text-xs shadow-lg backdrop-blur-sm",
         tone === "light"
           ? "border border-zinc-300 bg-white/95 dark:border-zinc-600 dark:bg-zinc-900/95"
           : "border border-white/20 bg-black/70",

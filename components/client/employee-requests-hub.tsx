@@ -1,22 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, Clock, LogIn, FileWarning } from "lucide-react";
+import { LogIn, FileWarning, FileCheck } from "lucide-react";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 const cards = [
   {
-    href: "/dashboard/employee/requests/login",
-    title: "Login request",
-    description: "Workspace access status after onboarding, and resubmit if needed.",
-    icon: LogIn,
+    href: "/dashboard/employee/leaves",
+    title: "Staff Leave Applications",
+    description: "Apply for casual or medical leave with reason and required certificates.",
+    icon: FileCheck,
   },
   {
-    href: "/dashboard/employee/requests/offsite",
-    title: "Off-site request",
-    description: "Request and manage off-site work with admin approval.",
-    icon: Building2,
+    href: "/dashboard/employee/requests/manual",
+    title: "Missed Attendance Request",
+    description: "Submit school arrival or departure punch adjustments for administrative approval.",
+    icon: FileWarning,
+  },
+  {
+    href: "/dashboard/employee/requests/login",
+    title: "Onboarding Access Status",
+    description: "Check your current account approval status and profile details.",
+    icon: LogIn,
   },
 ] as const;
 
@@ -24,9 +30,9 @@ export function EmployeeRequestsHub() {
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-3 sm:p-6 md:p-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Requests</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Teacher Requests</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Login access and off-site requests are grouped here. Late/Overtime tagging is now available directly in the Check-in and Check-out panels.
+          Apply for leaves, request missed attendance adjustments, or check your account approval status.
         </p>
       </div>
       <ul className="grid gap-4 sm:grid-cols-1">

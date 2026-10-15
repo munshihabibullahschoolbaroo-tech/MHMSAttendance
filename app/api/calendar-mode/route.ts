@@ -18,7 +18,8 @@ export async function GET(req: Request) {
   }
 
   const snap = await adminDb().doc("system/appSettings").get();
-  const mode = snap.exists && snap.get("calendarMode") === "ad" ? "ad" : "bs";
+  const mode = snap.exists && snap.get("calendarMode") === "bs" ? "bs" : "ad";
   setCalendarModeCache({ mode, expiresAt: Date.now() + CALENDAR_MODE_CACHE_TTL_MS });
   return Response.json({ mode });
 }
+

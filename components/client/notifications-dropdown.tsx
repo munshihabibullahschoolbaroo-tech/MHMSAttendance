@@ -185,7 +185,7 @@ export function NotificationsDropdown() {
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           className={cn(
-            "z-[2000] flex max-h-[min(85vh,32rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-hidden rounded-2xl border border-zinc-200/90",
+            "z-[9999] flex max-h-[min(85vh,32rem)] w-[min(100vw-2rem,24rem)] flex-col overflow-hidden rounded-2xl border border-zinc-200/90",
             "bg-white/95 p-0 shadow-2xl backdrop-blur-md dark:border-white/10 dark:bg-zinc-950/95"
           )}
           sideOffset={8}

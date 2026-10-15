@@ -1,14 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
-import {
-  GoogleAuthProvider,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-} from "firebase/auth";
-import { Eye, EyeOff } from "lucide-react";
+import { onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -17,77 +12,27 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input, formFieldLabelClass } from "@/components/ui/input";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { ensureEmployeeUserDoc } from "@/lib/firebase/ensure-employee-user-doc";
-import { cn } from "@/lib/utils";
+import { MhmsMark } from "@/components/mhms-mark";
 
 export function LoginForm() {
   const router = useRouter();
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [showPassword, setShowPassword] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [redirecting, setRedirecting] = React.useState(false);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      const auth = getFirebaseAuth();
-      await signInWithEmailAndPassword(auth, email.trim(), password);
-      const u = auth.currentUser;
-      if (!u?.email) throw new Error("Missing email on account.");
-
-      await u.reload();
-      await u.getIdToken(true);
-
-      let displayName = u.displayName ?? u.email.split("@")[0] ?? "Employee";
-      try {
-        const raw = sessionStorage.getItem("attendance_pending_profile");
-        if (raw) {
-          const p = JSON.parse(raw) as { name?: string; email?: string };
-          if (
-            p.email?.toLowerCase() === u.email?.toLowerCase() &&
-            typeof p.name === "string" &&
-            p.name.trim()
-          ) {
-            displayName = p.name.trim();
-            sessionStorage.removeItem("attendance_pending_profile");
-          }
-        }
-      } catch {
-        /* ignore */
+  // If already authenticated, directly navigate to dashboard
+  React.useEffect(() => {
+    const auth = getFirebaseAuth();
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (u) {
+        setRedirecting(true);
+        window.location.href = "/dashboard";
       }
-
-      await ensureEmployeeUserDoc(u, displayName);
-      router.replace("/dashboard/employee/check-in");
-    } catch (e) {
-      const code =
-        e && typeof e === "object" && "code" in e
-          ? String((e as { code?: string }).code ?? "")
-          : "";
-      if (e instanceof Error && e.message === "VERIFY_EMAIL") {
-        setError("Could not open your workspace profile. Try again or use Google sign-in below.");
-      } else if (
-        code === "auth/invalid-credential" ||
-        code === "auth/wrong-password" ||
-        code === "auth/user-not-found" ||
-        code === "auth/invalid-email"
-      ) {
-        setError("Invalid email or password.");
-      } else if (code === "auth/too-many-requests") {
-        setError("Too many attempts. Try again in a few minutes.");
-      } else if (e instanceof Error && e.message) {
-        setError(e.message);
-      } else {
-        setError("Sign-in failed. Try again.");
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
+    return () => unsub();
+  }, []);
 
   const signInWithGoogle = async () => {
     setError(null);
@@ -96,101 +41,114 @@ export function LoginForm() {
       const auth = getFirebaseAuth();
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      await signInWithPopup(auth, provider);
+      const cred = await signInWithPopup(auth, provider);
 
-      const u = auth.currentUser;
+      const u = cred.user;
       if (!u?.uid || !u.email) throw new Error("Google sign-in failed.");
+      setRedirecting(true);
       await u.reload();
       await u.getIdToken(true);
-      const name = u.displayName ?? u.email.split("@")[0] ?? "Employee";
+      const name = u.displayName ?? u.email.split("@")[0] ?? "Teacher";
       await ensureEmployeeUserDoc(u, name);
 
-      router.replace("/dashboard/employee/check-in");
+      window.location.href = "/dashboard";
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Google sign-in failed.";
-      setError(msg);
-    } finally {
+      setRedirecting(false);
       setBusy(false);
+      const code =
+        e && typeof e === "object" && "code" in e
+          ? String((e as { code?: string }).code ?? "")
+          : "";
+      if (
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request"
+      ) {
+        setError("Sign-in popup was closed before completion. Please try again.");
+      } else {
+        const msg = e instanceof Error ? e.message : "Google sign-in failed.";
+        setError(msg);
+      }
     }
   };
 
+  if (redirecting) {
+    return (
+      <Card className="w-full max-w-md border-zinc-200/80 bg-white/90 shadow-xl backdrop-blur-xl dark:border-white/10 dark:bg-zinc-950/80 p-8 text-center">
+        <div className="flex flex-col items-center justify-center space-y-4">
+          <MhmsMark className="h-16 w-16 animate-pulse" />
+          <div className="space-y-1">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+              Welcome to MHMS
+            </h3>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              Taking you to your attendance dashboard…
+            </p>
+          </div>
+          <Loader2 className="size-6 animate-spin text-blue-600 dark:text-blue-400 mt-2" />
+        </div>
+      </Card>
+    );
+  }
+
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle>Sign in</CardTitle>
-        <CardDescription>
-          Sign in with email and password, or use Google at the bottom.
+    <Card className="w-full max-w-md border-zinc-200/80 bg-white/90 shadow-xl backdrop-blur-xl dark:border-white/10 dark:bg-zinc-950/80">
+      <CardHeader className="flex flex-col items-center text-center pb-4">
+        <div className="mb-2">
+          <MhmsMark className="h-16 w-16 md:h-20 md:w-20" />
+        </div>
+        <CardTitle className="text-xl font-semibold tracking-tight md:text-2xl">
+          Sign in to MHMS
+        </CardTitle>
+        <CardDescription className="text-xs md:text-sm text-zinc-500 dark:text-zinc-400 mt-1 max-w-xs">
+          Munshi Habibullah Mission School, Kargil
+          <br />
+          Attendance & Staff Portal
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-6">
-        <form className="flex flex-col gap-4" onSubmit={(e) => void submit(e)}>
-          <label className="flex flex-col gap-1.5">
-            <span className={formFieldLabelClass}>Email</span>
-            <Input
-              type="email"
-              required
-              autoComplete="email"
-              placeholder="you@company.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className={formFieldLabelClass}>Password</span>
-            <div className="relative">
-              <Input
-                type={showPassword ? "text" : "password"}
-                required
-                autoComplete="current-password"
-                placeholder="••••••••"
-                className="pr-11"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+      <CardContent className="flex flex-col gap-5 pt-2">
+        <Button
+          type="button"
+          size="lg"
+          variant="outline"
+          className="relative h-12 w-full gap-3 border-zinc-300 bg-white font-medium text-zinc-800 shadow-sm transition-all hover:bg-zinc-50 hover:border-zinc-400 active:scale-[0.99] dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800/90"
+          onClick={() => void signInWithGoogle()}
+          disabled={busy}
+        >
+          {busy ? (
+            <Loader2 className="size-5 animate-spin text-zinc-600 dark:text-zinc-300" />
+          ) : (
+            <svg className="size-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="#4285F4"
+                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
               />
-              <button
-                type="button"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-                className={cn(
-                  "absolute right-1 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-lg",
-                  "text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900",
-                  "dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100"
-                )}
-                onClick={() => setShowPassword((s) => !s)}
-              >
-                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-              </button>
-            </div>
-          </label>
-          {error ? (
-            <p className="text-sm font-medium text-red-700 dark:text-red-400">{error}</p>
-          ) : null}
-          <Button type="submit" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
-          </Button>
-        </form>
-
-        <div className="relative py-1">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-zinc-200/90 dark:border-white/10" />
-          </div>
-          <div className="relative flex justify-center text-xs">
-            <span className="bg-card px-2 text-zinc-500 dark:text-zinc-400">OR</span>
-          </div>
-        </div>
-
-        <Button type="button" variant="secondary" onClick={() => void signInWithGoogle()} disabled={busy}>
-          {busy ? "Working…" : "Continue with Google"}
+              <path
+                fill="#34A853"
+                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24Z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15Z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98Z"
+              />
+            </svg>
+          )}
+          <span>{busy ? "Signing in…" : "Continue with Google"}</span>
         </Button>
 
-        <p className="text-center text-sm text-zinc-600 dark:text-zinc-400">
-          No account?{" "}
-          <Link
-            href="/signup"
-            className="font-medium text-cyan-700 underline-offset-2 hover:underline dark:text-cyan-400"
-          >
-            Create one
-          </Link>
-        </p>
+        {error ? (
+          <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-center text-xs md:text-sm font-medium text-red-700 dark:text-red-400">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-center gap-1.5 text-center text-xs text-zinc-500 dark:text-zinc-400 pt-1">
+          <ShieldCheck className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <span>Sign in with your verified school Google account</span>
+        </div>
       </CardContent>
     </Card>
   );

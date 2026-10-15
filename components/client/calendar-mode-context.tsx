@@ -13,21 +13,21 @@ type CtxType = {
 };
 
 const Ctx = React.createContext<CtxType>({
-  mode: "bs",
+  mode: "ad",
   loading: true,
   refresh: async () => {},
   setMode: async () => {},
 });
 
 export function CalendarModeProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setModeState] = React.useState<CalendarMode>("bs");
+  const [mode, setModeState] = React.useState<CalendarMode>("ad");
   const [loading, setLoading] = React.useState(true);
 
   const refresh = React.useCallback(async () => {
     const auth = getFirebaseAuth();
     const u = auth.currentUser;
     if (!u) {
-      setModeState("bs");
+      setModeState("ad");
       setLoading(false);
       return;
     }
@@ -39,10 +39,11 @@ export function CalendarModeProvider({ children }: { children: React.ReactNode }
         cache: "no-store",
       });
       const data = (await res.json()) as { mode?: CalendarMode };
-      setModeState(data.mode === "ad" ? "ad" : "bs");
+      setModeState(data.mode === "bs" ? "bs" : "ad");
     } finally {
       setLoading(false);
     }
+
   }, []);
 
   React.useEffect(() => {

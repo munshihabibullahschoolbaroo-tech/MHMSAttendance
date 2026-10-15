@@ -11,16 +11,18 @@ export function OnboardingGate({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     if (loading || !user) return;
-    const needsOnboarding =
-      user.role === "employee" &&
-      (!user.designation?.trim() || !user.employeeId?.trim());
+    const needsOnboarding = user.role === "employee" && !user.onboarded;
     const onOnboardingPage = pathname?.startsWith("/dashboard/onboarding") ?? false;
     if (needsOnboarding && !onOnboardingPage) {
       router.replace("/dashboard/onboarding");
       return;
     }
     if (!needsOnboarding && onOnboardingPage) {
-      router.replace("/dashboard/employee/check-in");
+      if (user.role === "admin" || user.role === "super_admin") {
+        router.replace("/dashboard/admin");
+      } else {
+        router.replace("/dashboard/employee/check-in");
+      }
     }
   }, [loading, pathname, router, user]);
 

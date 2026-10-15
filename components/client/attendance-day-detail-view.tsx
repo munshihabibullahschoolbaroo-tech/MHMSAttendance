@@ -23,6 +23,7 @@ import type {
 } from "@/lib/attendance/worker-day-detail";
 import { formatInstantTime12hInZone, formatWallHm12h } from "@/lib/time/format-wall-time";
 import { DateTime } from "luxon";
+import { FileCheck, FileText } from "lucide-react";
 
 export type DayDetailPayload =
   | {
@@ -32,6 +33,15 @@ export type DayDetailPayload =
       absent: true;
       workerName: string | null;
       workerEmail: string | null;
+      onLeave?: boolean;
+      leave?: {
+        type: string;
+        startDate: string;
+        endDate: string;
+        reason: string;
+        documentUrl?: string | null;
+        adminNotes?: string | null;
+      } | null;
       overtime: OvertimeDayDetailRow[];
       offsite: OffsiteDayDetailRow[];
     }
@@ -211,73 +221,46 @@ function DayHoursSummary({
   data: DayDetailPayload;
   displayTimeZone: string;
 }) {
+  if (data.absent) return null;
   const z = workTimeZoneUiLabel(displayTimeZone);
-  const regularMs = data.absent
-    ? 0
-    : data.analytics.totalSessionMs != null
-      ? Math.max(0, data.analytics.totalSessionMs)
-      : 0;
-  let overtimeMs = 0;
-  for (const r of data.overtime) {
-    if (r.status !== "approved") continue;
-    const a = r.overtimeCheckIn?.atMs;
-    const b = r.overtimeCheckOut?.atMs;
-    if (a != null && b != null && b >= a) overtimeMs += b - a;
-  }
-  let offsiteMs = 0;
-  for (const r of data.offsite) {
-    if (r.status === "approved" && r.durationMs != null && r.durationMs >= 0) {
-      offsiteMs += r.durationMs;
-    }
-  }
-  const totalMs = regularMs + overtimeMs + offsiteMs;
-  const sessionOpen = data.absent ? false : data.analytics.sessionOpen;
+  const regularMs = data.analytics.totalSessionMs != null
+    ? Math.max(0, data.analytics.totalSessionMs)
+    : 0;
+  const sessionOpen = data.analytics.sessionOpen;
 
   return (
-    <Card className="border-emerald-500/25 bg-emerald-500/[0.05]">
+    <Card className="border-blue-500/25 bg-blue-500/[0.05]">
       <CardHeader>
-        <CardTitle className="text-base">Day hours summary</CardTitle>
+        <CardTitle className="text-base font-semibold">Teacher Attendance Summary</CardTitle>
         <CardDescription>
-          Regular time from check-in through check-out (per site above), plus approved overtime and
-          approved off-site. Times are based on your calendar day in {z}.
+          Recorded attendance session for Munshi Habibullah Mission School ({z}).
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-2 text-sm">
+      <CardContent className="space-y-3 text-sm">
         <div className="flex flex-wrap justify-between gap-2 border-b border-zinc-200/80 pb-2 dark:border-white/10">
-          <span className="text-zinc-600 dark:text-zinc-400">Regular (sites until check-out)</span>
-          <span className="font-mono text-emerald-800 dark:text-emerald-200/90">
-            {regularMs > 0 || !data.absent ? (
+          <span className="text-zinc-600 dark:text-zinc-400">School Presence</span>
+          <span className="font-mono font-semibold text-blue-900 dark:text-blue-200">
+            {regularMs > 0 ? (
               <>
                 {fmtDuration(regularMs)}
-                {sessionOpen ? " (so far)" : ""}
+                {sessionOpen ? " (active in school)" : " (completed)"}
               </>
             ) : (
-              "—"
+              "Recorded"
             )}
           </span>
         </div>
-        <div className="flex flex-wrap justify-between gap-2 border-b border-zinc-200/80 pb-2 dark:border-white/10">
-          <span className="text-zinc-600 dark:text-zinc-400">Approved overtime</span>
-          <span className="font-mono text-amber-800 dark:text-amber-200/90">
-            {overtimeMs > 0 ? fmtDuration(overtimeMs) : "—"}
-          </span>
-        </div>
-        <div className="flex flex-wrap justify-between gap-2 border-b border-zinc-200/80 pb-2 dark:border-white/10">
-          <span className="text-zinc-600 dark:text-zinc-400">Approved off-site</span>
-          <span className="font-mono text-sky-800 dark:text-sky-200/90">
-            {offsiteMs > 0 ? fmtDuration(offsiteMs) : "—"}
-          </span>
-        </div>
         <div className="flex flex-wrap justify-between gap-2 pt-1">
-          <span className="font-medium text-zinc-900 dark:text-zinc-200">Total credited hours</span>
-          <span className="font-mono text-lg font-semibold text-emerald-900 dark:text-emerald-100">
-            {totalMs > 0 ? fmtDuration(totalMs) : "—"}
+          <span className="font-medium text-zinc-900 dark:text-zinc-200">Total Hours in School</span>
+          <span className="font-mono text-lg font-bold text-blue-700 dark:text-blue-300">
+            {regularMs > 0 ? fmtDuration(regularMs) : "—"}
           </span>
         </div>
       </CardContent>
     </Card>
   );
 }
+
 
 function OvertimeSection({
   rows,
@@ -417,7 +400,7 @@ export function AttendanceDayDetailView({
             <h1 className="text-2xl font-semibold tracking-tight">Day timeline</h1>
             <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
               <span className="font-mono text-zinc-800 dark:text-zinc-300">
-                {formatIsoForCalendar(data.day, mode, displayTz)}
+                {formatIsoForCalendar(data.day, "ad", displayTz)}
               </span>
               {data.workerName ? (
                 <>
@@ -436,7 +419,7 @@ export function AttendanceDayDetailView({
             <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
               Calendar day ({zoneLabel}):{" "}
               <span className="font-mono text-zinc-800 dark:text-zinc-300">
-                {formatIsoForCalendar(data.day, mode, displayTz)}
+                {formatIsoForCalendar(data.day, "ad", displayTz)}
               </span>
             </p>
           </div>
@@ -447,20 +430,68 @@ export function AttendanceDayDetailView({
       </div>
 
       {data.absent ? (
-        <>
+        data.leave ? (
+          <Card className="border-blue-200 bg-gradient-to-r from-blue-50/70 via-blue-50/30 to-transparent shadow-sm dark:border-blue-900/40 dark:bg-blue-950/20">
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-lg font-bold text-blue-950 dark:text-blue-100 flex items-center gap-2">
+                  <FileCheck className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  On Approved {data.leave.type.toUpperCase()} Leave
+                </CardTitle>
+                <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
+                  Official Leave Approved
+                </span>
+              </div>
+              <CardDescription className="text-xs text-zinc-600 dark:text-zinc-400">
+                Official absence granted by School Administration • Punch excused
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-white/10">
+                  <span className="text-zinc-400 font-medium">Leave Period</span>
+                  <p className="font-semibold text-zinc-900 dark:text-zinc-100 text-sm mt-0.5">
+                    {data.leave.startDate} to {data.leave.endDate}
+                  </p>
+                </div>
+                <div className="p-3 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-white/10">
+                  <span className="text-zinc-400 font-medium">Reason for Absence</span>
+                  <p className="font-medium text-zinc-800 dark:text-zinc-200 mt-0.5">
+                    {data.leave.reason}
+                  </p>
+                </div>
+              </div>
+              {data.leave.documentUrl && (
+                <div className="pt-1">
+                  <a
+                    href={data.leave.documentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    <FileText className="h-4 w-4" /> View Medical Certificate / Prescription ↗
+                  </a>
+                </div>
+              )}
+              {data.leave.adminNotes && (
+                <p className="text-[11px] text-zinc-500 italic">
+                  Admin Remark: {data.leave.adminNotes}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
           <Card>
             <CardHeader>
-              <CardTitle>No attendance</CardTitle>
+              <CardTitle>No Attendance Recorded</CardTitle>
               <CardDescription>
-                No check-in record for this calendar day — absent or not scheduled.
+                No punch record found for this calendar day — teacher was absent.
               </CardDescription>
             </CardHeader>
           </Card>
-          <OvertimeSection rows={data.overtime} displayTimeZone={displayTz} mode={mode} />
-          <OffsiteSection rows={data.offsite} displayTimeZone={displayTz} />
-          <DayHoursSummary data={data} displayTimeZone={displayTz} />
-        </>
+        )
       ) : (
+
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Card className="bg-zinc-50/90 dark:bg-white/[0.02]">
@@ -586,10 +617,8 @@ export function AttendanceDayDetailView({
             </Card>
           ) : null}
 
-          <OvertimeSection rows={data.overtime} displayTimeZone={displayTz} mode={mode} />
-          <OffsiteSection rows={data.offsite} displayTimeZone={displayTz} />
-
           <Card className="border-violet-500/20 bg-violet-500/[0.03]">
+
             <CardHeader>
               <CardTitle className="text-base">Full timeline</CardTitle>
               <CardDescription>

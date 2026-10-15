@@ -95,6 +95,44 @@ function hoursFromMs(ms: number): number {
 }
 
 function buildDayEntryRows(day: string, zone: string, data: WorkerDayDetailResult): DayEntryRow[] {
+  const dt = DateTime.fromISO(day, { zone });
+  const isSunday = dt.isValid && dt.weekday === 7;
+
+  // 1. Approved Leave
+  if (data.onLeave && data.leave) {
+    const leaveTitle = data.leave.type === "medical" ? "Medical Leave" : "Casual Leave";
+    return [
+      {
+        id: `${day}-leave`,
+        day,
+        kind: "off_site",
+        inTime: "—",
+        outTime: "—",
+        dutyHours: 0,
+        workPlace: "MHMS Main Campus",
+        schedule: "—",
+        remark: `Approved ${leaveTitle}`,
+      },
+    ];
+  }
+
+  // 2. Sunday (School Holiday)
+  if (isSunday && data.absent) {
+    return [
+      {
+        id: `${day}-sunday`,
+        day,
+        kind: "on_site",
+        inTime: "—",
+        outTime: "—",
+        dutyHours: 0,
+        workPlace: "MHMS Main Campus",
+        schedule: "—",
+        remark: "Sunday (School Holiday)",
+      },
+    ];
+  }
+
   const rows: DayEntryRow[] = [];
   if (!data.absent) {
     const segments = data.analytics.segments ?? [];
@@ -109,15 +147,20 @@ function buildDayEntryRows(day: string, zone: string, data: WorkerDayDetailResul
           inTime: hmFromMs(s.startMs, zone),
           outTime: hmFromMs(s.endMs, zone),
           dutyHours: hoursFromMs(ms),
-          workPlace: s.siteName || s.siteId || "On-site",
-          schedule: s.workScheduleLabel ?? "—",
-          remark: "On-site session",
+          workPlace: s.siteName || "MHMS Main Campus",
+          schedule: s.workScheduleLabel ?? "9:00 AM – 3:30 PM",
+          remark: "Present",
         });
       }
     } else {
       const start = data.checkIn?.atMs ?? null;
       const end = data.checkOut?.atMs ?? null;
-      const ms = start != null && end != null && end >= start ? end - start : 0;
+      const ms =
+        start != null && end != null && end >= start
+          ? end - start
+          : start != null
+          ? 6.5 * 3600000
+          : 0;
       rows.push({
         id: `${day}-on-0`,
         day,
@@ -125,59 +168,27 @@ function buildDayEntryRows(day: string, zone: string, data: WorkerDayDetailResul
         inTime: hmFromMs(start, zone),
         outTime: hmFromMs(end, zone),
         dutyHours: hoursFromMs(ms),
-        workPlace: data.currentSiteName || data.currentSiteId || "On-site",
-        schedule: "—",
-        remark: "On-site session",
+        workPlace: data.currentSiteName || "MHMS Main Campus",
+        schedule: "9:00 AM – 3:30 PM",
+        remark: "Present",
       });
     }
   }
-  for (let i = 0; i < data.overtime.length; i++) {
-    const r = data.overtime[i]!;
-    if (r.status !== "approved") continue;
-    const start = r.overtimeCheckIn?.atMs ?? null;
-    const end = r.overtimeCheckOut?.atMs ?? null;
-    const ms = start != null && end != null && end >= start ? end - start : 0;
-    rows.push({
-      id: `${day}-ot-${r.id}`,
-      day,
-      kind: "overtime",
-      inTime: hmFromMs(start, zone),
-      outTime: hmFromMs(end, zone),
-      dutyHours: hoursFromMs(ms),
-      workPlace: r.siteName || r.siteId || "Overtime",
-      schedule: "—",
-      remark: "Approved overtime",
-    });
-  }
-  for (let i = 0; i < data.offsite.length; i++) {
-    const r = data.offsite[i]!;
-    if (r.status !== "approved") continue;
-    const hmStart = r.approvedStartHm || r.requestedStartHm;
-    const hmEnd = r.approvedEndHm || r.requestedEndHm;
-    const ms = r.durationMs ?? 0;
-    rows.push({
-      id: `${day}-off-${r.id}`,
-      day,
-      kind: "off_site",
-      inTime: hmStart ? hm24to12(hmStart) : "—",
-      outTime: hmEnd ? hm24to12(hmEnd) : "—",
-      dutyHours: hoursFromMs(ms),
-      workPlace: "Off-site",
-      schedule: "—",
-      remark: "Approved off-site",
-    });
-  }
+
+  const todayInZone = DateTime.now().setZone(zone).toISODate()!;
+  const isFuture = day > todayInZone;
+
   if (rows.length === 0) {
     rows.push({
-      id: `${day}-none`,
+      id: isFuture ? `${day}-unmarked` : `${day}-absent`,
       day,
       kind: "on_site",
       inTime: "—",
       outTime: "—",
       dutyHours: 0,
-      workPlace: "—",
+      workPlace: "MHMS Main Campus",
       schedule: "—",
-      remark: "No work entry",
+      remark: isFuture ? "Unmarked" : "Absent",
     });
   }
   return rows;

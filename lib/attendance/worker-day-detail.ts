@@ -343,26 +343,32 @@ async function fetchTrackingPingsForWorkerDay(
   day: string,
   workerTimeZone: string
 ): Promise<TrackingPing[]> {
-  const dayStart = DateTime.fromISO(day, { zone: workerTimeZone }).startOf("day");
-  const dayEnd = dayStart.plus({ days: 1 });
-  const snap = await db
-    .collection("live_tracking_logs")
-    .where("workerId", "==", workerId)
-    .where("at", ">=", dayStart.toJSDate())
-    .where("at", "<", dayEnd.toJSDate())
-    .orderBy("at", "asc")
-    .get();
-  return snap.docs
-    .map((d) => {
-      const x = d.data() as Record<string, unknown>;
-      const atMs = timeToMs(x.at);
-      const latitude = Number(x.latitude);
-      const longitude = Number(x.longitude);
-      if (atMs == null || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-      return { atMs, latitude, longitude };
-    })
-    .filter((x): x is TrackingPing => !!x);
+  try {
+    const dayStart = DateTime.fromISO(day, { zone: workerTimeZone }).startOf("day");
+    const dayEnd = dayStart.plus({ days: 1 });
+    const snap = await db
+      .collection("live_tracking_logs")
+      .where("workerId", "==", workerId)
+      .where("at", ">=", dayStart.toJSDate())
+      .where("at", "<", dayEnd.toJSDate())
+      .orderBy("at", "asc")
+      .get();
+    return snap.docs
+      .map((d) => {
+        const x = d.data() as Record<string, unknown>;
+        const atMs = timeToMs(x.at);
+        const latitude = Number(x.latitude);
+        const longitude = Number(x.longitude);
+        if (atMs == null || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+        return { atMs, latitude, longitude };
+      })
+      .filter((x): x is TrackingPing => !!x);
+  } catch (err) {
+    console.warn("[fetchTrackingPingsForWorkerDay] non-critical tracking pings query error:", err);
+    return [];
+  }
 }
+
 
 export type WorkerDayDetailResult =
   | {
@@ -372,6 +378,15 @@ export type WorkerDayDetailResult =
       absent: true;
       workerName: string | null;
       workerEmail: string | null;
+      onLeave?: boolean;
+      leave?: {
+        type: string;
+        startDate: string;
+        endDate: string;
+        reason: string;
+        documentUrl?: string | null;
+        adminNotes?: string | null;
+      } | null;
       overtime: OvertimeDayDetailRow[];
       offsite: OffsiteDayDetailRow[];
     }
@@ -382,6 +397,15 @@ export type WorkerDayDetailResult =
       absent: false;
       workerName: string | null;
       workerEmail: string | null;
+      onLeave?: boolean;
+      leave?: {
+        type: string;
+        startDate: string;
+        endDate: string;
+        reason: string;
+        documentUrl?: string | null;
+        adminNotes?: string | null;
+      } | null;
       status: string;
       currentSiteId: string | null;
       currentSiteName: string | null;
@@ -435,12 +459,49 @@ export async function buildWorkerDayDetail(
   const userSnap = await db.collection("users").doc(workerId).get();
   const workerTz = timeZoneFromUserSnapshot(userSnap);
 
-  const [overtime, offsite, attSnap, trackingPings] = await Promise.all([
+  const [overtime, offsite, attSnap, trackingPings, leavesSnap, teacherSessionSnap] = await Promise.all([
     fetchOvertimeForWorkerDay(db, workerId, day),
     fetchOffsiteForWorkerDay(db, workerId, day, workerTz),
     db.collection("attendance").doc(`${workerId}_${day}`).get(),
     fetchTrackingPingsForWorkerDay(db, workerId, day, workerTz),
+    db
+      .collection("leaveRequests")
+      .where("teacherId", "==", workerId)
+      .where("status", "==", "approved")
+      .get()
+      .catch(() => ({ docs: [] })),
+    db
+      .collection("teacherSessions")
+      .doc(`${workerId}_${day}`)
+      .get()
+      .catch(() => null),
   ]);
+
+  let approvedLeave: {
+    type: string;
+    startDate: string;
+    endDate: string;
+    reason: string;
+    documentUrl?: string | null;
+    adminNotes?: string | null;
+  } | null = null;
+
+  for (const d of leavesSnap.docs) {
+    const lData = d.data();
+    const start = String(lData.startDate ?? "");
+    const end = String(lData.endDate ?? start);
+    if (day >= start && day <= end) {
+      approvedLeave = {
+        type: String(lData.type ?? "casual"),
+        startDate: start,
+        endDate: end,
+        reason: String(lData.reason ?? ""),
+        documentUrl: typeof lData.documentUrl === "string" ? lData.documentUrl : null,
+        adminNotes: typeof lData.adminNotes === "string" ? lData.adminNotes : null,
+      };
+      break;
+    }
+  }
 
   const workerName =
     userSnap.exists && typeof userSnap.get("name") === "string"
@@ -451,7 +512,10 @@ export async function buildWorkerDayDetail(
       ? (userSnap.get("email") as string)
       : null;
 
-  if (!attSnap.exists) {
+  const hasTeacherSession = Boolean(teacherSessionSnap && teacherSessionSnap.exists);
+  const tsData = hasTeacherSession ? (teacherSessionSnap!.data() ?? {}) : null;
+
+  if (!attSnap.exists && !hasTeacherSession) {
     return {
       ok: true,
       day,
@@ -459,6 +523,85 @@ export async function buildWorkerDayDetail(
       absent: true,
       workerName,
       workerEmail,
+      onLeave: approvedLeave !== null,
+      leave: approvedLeave,
+      overtime,
+      offsite,
+    };
+  }
+
+  // If attendance doesn't exist but teacherSessions does, synthesize check-in & check-out
+  if (!attSnap.exists && tsData) {
+    const checkInMs = timeToMs(tsData.checkInTime);
+    const checkOutMs = timeToMs(tsData.checkOutTime);
+    const totalSessionMs =
+      checkInMs != null && checkOutMs != null && checkOutMs >= checkInMs
+        ? checkOutMs - checkInMs
+        : checkInMs != null
+        ? 6.5 * 3600000
+        : 0;
+
+    return {
+      ok: true,
+      day,
+      workerId,
+      absent: checkInMs == null,
+      workerName,
+      workerEmail,
+      status: String(tsData.status ?? "present"),
+      currentSiteId: "mhms_main_campus",
+      currentSiteName: "MHMS Main Campus",
+      onLeave: approvedLeave !== null,
+      leave: approvedLeave,
+      checkIn: checkInMs
+        ? {
+            atMs: checkInMs,
+            siteId: "mhms_main_campus",
+            siteName: "MHMS Main Campus",
+            photoUrl: null,
+            gps: tsData.checkInGps ?? null,
+          }
+        : null,
+      checkOut: checkOutMs
+        ? {
+            atMs: checkOutMs,
+            siteId: "mhms_main_campus",
+            siteName: "MHMS Main Campus",
+            photoUrl: null,
+            gps: tsData.checkOutGps ?? null,
+            auto: false,
+          }
+        : null,
+      siteSwitchLogs: [],
+      timeline: [],
+      analytics: {
+        sessionOpen: checkOutMs == null,
+        switchCount: 0,
+        uniqueSitesCount: 1,
+        sitesVisitedOrdered: [{ id: "mhms_main_campus", name: "MHMS Main Campus" }],
+        firstEventMs: checkInMs,
+        lastEventMs: checkOutMs ?? checkInMs,
+        totalSessionMs,
+        segments: checkInMs
+          ? [
+              {
+                siteId: "mhms_main_campus",
+                siteName: "MHMS Main Campus",
+                startMs: checkInMs,
+                endMs: checkOutMs ?? checkInMs + totalSessionMs,
+                durationMs: totalSessionMs,
+                workScheduleLabel: "9:00 AM – 3:30 PM",
+              },
+            ]
+          : [],
+        tracking: {
+          pingCount: 0,
+          outOfSiteMs: 0,
+          offlineMs: 0,
+          outOfSiteWindows: [],
+          offlineWindows: [],
+        },
+      },
       overtime,
       offsite,
     };

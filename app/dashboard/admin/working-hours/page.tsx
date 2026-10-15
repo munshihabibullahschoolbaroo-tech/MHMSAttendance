@@ -3,8 +3,6 @@
 import * as React from "react";
 import Link from "next/link";
 import JSZip from "jszip";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
 import { createPortal } from "react-dom";
 import { DateTime } from "luxon";
 import {
@@ -20,9 +18,19 @@ import { getFirebaseAuth } from "@/lib/firebase/client";
 import { WorkingHoursMonthPanel } from "@/components/client/working-hours-month-panel";
 import { Button } from "@/components/ui/button";
 import { useCalendarMode } from "@/components/client/calendar-mode-context";
-import { monthLabelForModeYm, formatIsoForCalendar, currentMonthYyyyMmForMode, convertMonthMode, adIsoToBsIso } from "@/lib/date/bs-calendar";
+import {
+  monthLabelForModeYm,
+  currentMonthYyyyMmForMode,
+  convertMonthMode,
+  adIsoToBsIso,
+} from "@/lib/date/bs-calendar";
 import { DEFAULT_ATTENDANCE_TIME_ZONE } from "@/lib/date/time-zone";
+import {
+  generateTeacherAttendancePdf,
+  TeacherMonthData,
+} from "@/lib/school/attendance-pdf";
 import { toast } from "sonner";
+import { Loader2, Download, Archive, Users, FileSpreadsheet } from "lucide-react";
 
 type UserRow = {
   id: string;
@@ -30,34 +38,10 @@ type UserRow = {
   name: string;
   email: string;
   role: string;
+  designation?: string;
 };
 
-type HoursPayload = {
-  month: string;
-  zone: string;
-  entries: {
-    id: string;
-    day: string;
-    kind: "on_site" | "overtime" | "off_site";
-    inTime: string;
-    outTime: string;
-    dutyHours: number;
-    workPlace: string;
-    schedule: string;
-    remark: string;
-  }[];
-  worker: { id: string; employeeId: string | null; name: string | null; designation: string | null };
-  totalHours: number;
-  approvedOffsiteHours: number;
-  approvedClockOvertimeHours: number;
-  onSiteSessionHours: number;
-};
-
-function kindLabel(kind: HoursPayload["entries"][number]["kind"]): string {
-  if (kind === "on_site") return "On-site";
-  if (kind === "off_site") return "Off-site";
-  return "Overtime";
-}
+type HoursPayload = TeacherMonthData;
 
 export default function AdminWorkingHoursPage() {
   const [users, setUsers] = React.useState<UserRow[]>([]);
@@ -69,12 +53,12 @@ export default function AdminWorkingHoursPage() {
     const current = currentMonthYyyyMmForMode("ad", DEFAULT_ATTENDANCE_TIME_ZONE);
     return Number(current.split("-")[0]) || DateTime.now().year;
   });
-  const [periodStartMonth, setPeriodStartMonth] = React.useState(() => currentMonthYyyyMmForMode("ad", DEFAULT_ATTENDANCE_TIME_ZONE));
-  const [periodEndMonth, setPeriodEndMonth] = React.useState(() => currentMonthYyyyMmForMode("ad", DEFAULT_ATTENDANCE_TIME_ZONE));
-  const [wageRate, setWageRate] = React.useState<number | null>(null);
-  const [overtimeRate, setOvertimeRate] = React.useState<number | null>(null);
-  const [wageRateLoading, setWageRateLoading] = React.useState(false);
-  const [wageRateSaving, setWageRateSaving] = React.useState(false);
+  const [periodStartMonth, setPeriodStartMonth] = React.useState(() =>
+    currentMonthYyyyMmForMode("ad", DEFAULT_ATTENDANCE_TIME_ZONE)
+  );
+  const [periodEndMonth, setPeriodEndMonth] = React.useState(() =>
+    currentMonthYyyyMmForMode("ad", DEFAULT_ATTENDANCE_TIME_ZONE)
+  );
   const [downloadingAll, setDownloadingAll] = React.useState(false);
   const [downloadStatus, setDownloadStatus] = React.useState("Waiting to start...");
   const [downloadCurrentEmployee, setDownloadCurrentEmployee] = React.useState("");
@@ -92,14 +76,22 @@ export default function AdminWorkingHoursPage() {
   const prevModeRef = React.useRef(mode);
   React.useEffect(() => {
     if (!mounted) {
-       setPeriodStartMonth(currentMonthYyyyMmForMode(mode, DEFAULT_ATTENDANCE_TIME_ZONE));
-       setPeriodEndMonth(currentMonthYyyyMmForMode(mode, DEFAULT_ATTENDANCE_TIME_ZONE));
-       prevModeRef.current = mode;
-       return;
+      setPeriodStartMonth(
+        currentMonthYyyyMmForMode(mode, DEFAULT_ATTENDANCE_TIME_ZONE)
+      );
+      setPeriodEndMonth(
+        currentMonthYyyyMmForMode(mode, DEFAULT_ATTENDANCE_TIME_ZONE)
+      );
+      prevModeRef.current = mode;
+      return;
     }
     if (prevModeRef.current !== mode) {
-      setPeriodStartMonth(prev => convertMonthMode(prev, prevModeRef.current, mode));
-      setPeriodEndMonth(prev => convertMonthMode(prev, prevModeRef.current, mode));
+      setPeriodStartMonth((prev) =>
+        convertMonthMode(prev, prevModeRef.current, mode)
+      );
+      setPeriodEndMonth((prev) =>
+        convertMonthMode(prev, prevModeRef.current, mode)
+      );
       prevModeRef.current = mode;
     }
   }, [mode, mounted]);
@@ -109,14 +101,14 @@ export default function AdminWorkingHoursPage() {
     let startYear = 2020;
     let endYear = now.year + 1;
     if (mode === "bs") {
-       const bsNow = adIsoToBsIso(now.toISODate()!).split("-").map(Number);
-       startYear = 2077;
-       endYear = bsNow[0]! + 1;
+      const bsNow = adIsoToBsIso(now.toISODate()!).split("-").map(Number);
+      startYear = 2077;
+      endYear = bsNow[0]! + 1;
     }
     const out: Array<{ value: string; label: string }> = [];
     for (let y = endYear; y >= startYear; y--) {
       for (let m = 12; m >= 1; m--) {
-        const value = `${String(y).padStart(4,"0")}-${String(m).padStart(2,"0")}`;
+        const value = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`;
         out.push({
           value,
           label: monthLabelForModeYm(y, m, mode),
@@ -138,7 +130,10 @@ export default function AdminWorkingHoursPage() {
         const res = await fetch("/api/admin/users", {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const data = (await res.json()) as { users?: UserRow[]; error?: string };
+        const data = (await res.json()) as {
+          users?: UserRow[];
+          error?: string;
+        };
         if (!res.ok) throw new Error(data.error ?? "Failed to load users");
         const emps = (data.users ?? []).filter((r) => r.role === "employee");
         emps.sort((a, b) =>
@@ -166,83 +161,18 @@ export default function AdminWorkingHoursPage() {
     };
   }, []);
 
-  React.useEffect(() => {
-    if (!workerId) { setWageRate(null); setOvertimeRate(null); return; }
-    let cancelled = false;
-    const run = async () => {
-      setWageRateLoading(true);
-      try {
-        const auth = getFirebaseAuth();
-        const u = auth.currentUser;
-        if (!u) return;
-        const token = await u.getIdToken();
-        const res = await fetch(`/api/admin/wage-rate?workerId=${workerId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = (await res.json()) as { wageRate: number | null; overtimeRate: number | null };
-        if (!cancelled) {
-          setWageRate(data.wageRate);
-          setOvertimeRate(data.overtimeRate);
-        }
-      } catch {
-        if (!cancelled) { setWageRate(null); setOvertimeRate(null); }
-      } finally {
-        if (!cancelled) setWageRateLoading(false);
-      }
-    };
-    void run();
-    return () => { cancelled = true; };
-  }, [workerId]);
-
-  const saveWageRate = React.useCallback(async (rate: number | null) => {
-    if (!workerId || rate === null || rate < 0) return;
-    setWageRateSaving(true);
-    try {
-      const auth = getFirebaseAuth();
-      const u = auth.currentUser;
-      if (!u) return;
-      const token = await u.getIdToken();
-      await fetch("/api/admin/wage-rate", {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ workerId, wageRate: rate }),
-      });
-    } catch {
-      toast.error("Failed to save wage rate");
-    } finally {
-      setWageRateSaving(false);
-    }
-  }, [workerId]);
-
-  const saveOvertimeRate = React.useCallback(async (rate: number | null) => {
-    if (!workerId || rate === null || rate < 0) return;
-    setWageRateSaving(true);
-    try {
-      const auth = getFirebaseAuth();
-      const u = auth.currentUser;
-      if (!u) return;
-      const token = await u.getIdToken();
-      await fetch("/api/admin/wage-rate", {
-        method: "PATCH",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ workerId, overtimeRate: rate }),
-      });
-    } catch {
-      toast.error("Failed to save overtime rate");
-    } finally {
-      setWageRateSaving(false);
-    }
-  }, [workerId]);
-
   const buildMonthsFromPeriod = React.useCallback(() => {
     if (periodMode === "year") {
-      return Array.from({ length: 12 }, (_, i) =>
-        `${String(periodYear).padStart(4, "0")}-${String(i + 1).padStart(2, "0")}`
+      return Array.from(
+        { length: 12 },
+        (_, i) =>
+          `${String(periodYear).padStart(4, "0")}-${String(i + 1).padStart(2, "0")}`
       );
     }
     const s = DateTime.fromFormat(periodStartMonth, "yyyy-MM");
     const e = DateTime.fromFormat(periodEndMonth, "yyyy-MM");
-    if (!s.isValid || !e.isValid || e < s) throw new Error("Invalid month range");
+    if (!s.isValid || !e.isValid || e < s)
+      throw new Error("Invalid month range");
     const out: string[] = [];
     let c = s.startOf("month");
     while (c <= e) {
@@ -252,133 +182,56 @@ export default function AdminWorkingHoursPage() {
     return out;
   }, [periodEndMonth, periodMode, periodStartMonth, periodYear]);
 
-  const fetchLogoDataUrl = React.useCallback(async (): Promise<string | null> => {
-    try {
-      const res = await fetch("/branding/mtes-logo.png");
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      const reader = new FileReader();
-      return await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(String(reader.result ?? ""));
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    } catch {
-      return null;
-    }
-  }, []);
-
   const buildPdfBytes = React.useCallback(
     async (rows: HoursPayload[], titlePeriod: string): Promise<Uint8Array> => {
-      const doc = new jsPDF({ unit: "pt", format: "a4" });
-      const logo = await fetchLogoDataUrl();
-      const workerMeta = rows[0]?.worker;
-      const marginX = 40;
-
-      const drawHeader = (monthLabel: string) => {
-        const y = 40;
-        if (logo) doc.addImage(logo, "PNG", marginX, y, 48, 48);
-        doc.setFontSize(15);
-        doc.setFont("helvetica", "bold");
-        doc.text("MASS TECHNOLOGY AND ENGINEERING SOLUTION PVT. LTD", marginX + 58, y + 14);
-        doc.setFontSize(10.5);
-        doc.setFont("helvetica", "normal");
-        doc.text("KAGESHWORI MANOHARA-09, KATHMANDU", marginX + 58, y + 30);
-        doc.text("info@masstech.com.np, masstechno2020@gmail.com", marginX + 58, y + 44);
-        doc.text("9851358290, 9842995084", marginX + 58, y + 58);
-        doc.setFont("helvetica", "bold");
-        doc.text("Attendance Sheet", marginX, y + 82);
-        doc.setFont("helvetica", "normal");
-        doc.text(`Employee: ${workerMeta?.name ?? "-"}`, marginX, y + 100);
-        doc.text(`Employee ID: ${workerMeta?.employeeId ?? "-"}`, marginX + 180, y + 100);
-        doc.text(`Designation: ${workerMeta?.designation ?? "-"}`, marginX + 360, y + 100);
-        doc.text(`Month: ${monthLabel}`, marginX, y + 116);
-        doc.text(`Period: ${titlePeriod}`, marginX + 250, y + 116);
-        return y + 130;
-      };
-
-      for (let i = 0; i < rows.length; i++) {
-        const p = rows[i]!;
-        if (i > 0) doc.addPage("a4");
-        const pMonthParts = p.month.split("-").map(Number);
-        const monthLabel =
-          pMonthParts.length === 2 && Number.isFinite(pMonthParts[0]) && Number.isFinite(pMonthParts[1])
-            ? monthLabelForModeYm(pMonthParts[0]!, pMonthParts[1]!, mode)
-            : p.month;
-        const startY = drawHeader(monthLabel);
-        autoTable(doc, {
-          startY,
-          head: [
-            [
-              "Date",
-              "Day",
-              "Type",
-              "In Time",
-              "Out Time",
-              "Duty Hours",
-              "Work Place",
-              "Remark",
-            ],
-          ],
-          body: p.entries.map((r) => [
-            mode === "bs" ? formatIsoForCalendar(r.day, "bs", p.zone) : r.day,
-            DateTime.fromISO(r.day, { zone: p.zone }).toFormat("ccc"),
-            kindLabel(r.kind),
-            r.inTime,
-            r.outTime,
-            r.dutyHours.toFixed(2),
-            r.workPlace,
-            r.remark || "-",
-          ]),
-          foot: [[
-            "",
-            "",
-            "Month total",
-            "",
-            "",
-            p.totalHours.toFixed(2),
-            `On-site ${p.onSiteSessionHours.toFixed(2)} | OT ${p.approvedClockOvertimeHours.toFixed(2)} | Off-site ${p.approvedOffsiteHours.toFixed(2)}`,
-            "",
-            "",
-          ]],
-          styles: { fontSize: 8, cellPadding: 4.2 },
-          headStyles: { fillColor: [24, 24, 27], textColor: [255, 255, 255] },
-          footStyles: { fillColor: [245, 245, 245], textColor: [20, 20, 20] },
-        });
-      }
+      const doc = await generateTeacherAttendancePdf({
+        monthsData: rows,
+        titlePeriod,
+        filePrefix:
+          rows[0]?.worker?.employeeId ?? rows[0]?.worker?.id ?? "employee",
+      });
       const ab = doc.output("arraybuffer");
       return new Uint8Array(ab);
     },
-    [fetchLogoDataUrl, mode]
+    []
   );
 
   const downloadAllEmployeesZip = React.useCallback(async () => {
     cancelDownloadRef.current = false;
     setDownloadingAll(true);
-    setDownloadStatus("Preparing data...");
+    setDownloadStatus("Preparing staff attendance reports...");
     setDownloadCurrentEmployee("");
     setDownloadDoneCount(0);
     setDownloadTotalCount(users.length);
+
     try {
-      if (users.length === 0) throw new Error("No employees found");
       const auth = getFirebaseAuth();
       const u = auth.currentUser;
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
       const months = buildMonthsFromPeriod();
-      setDownloadStatus(`Building ${months.length} month(s) for each employee...`);
       const periodTitle =
-        periodMode === "year" ? `${periodYear}` : `${periodStartMonth} to ${periodEndMonth}`;
+        periodMode === "year"
+          ? `${periodYear}`
+          : `${periodStartMonth} to ${periodEndMonth}`;
       const zip = new JSZip();
 
       for (let idx = 0; idx < users.length; idx++) {
         if (cancelDownloadRef.current) throw new Error("Download cancelled");
         const emp = users[idx]!;
-        setDownloadCurrentEmployee(emp.employeeId?.trim() ? `${emp.employeeId} (${emp.name || "Employee"})` : (emp.name || "Employee"));
-        setDownloadStatus(`Preparing PDF ${idx + 1} of ${users.length}...`);
-        const folderName = `${(emp.employeeId?.trim() || emp.id).replace(/[^\w.-]+/g, "_")}_${(emp.name || "Employee").replace(/[^\w.-]+/g, "_")}`;
+        setDownloadCurrentEmployee(
+          emp.employeeId?.trim()
+            ? `${emp.employeeId} (${emp.name || "Teacher"})`
+            : emp.name || "Teacher"
+        );
+        setDownloadStatus(`Generating PDF ${idx + 1} of ${users.length}...`);
+
+        const safeName = (emp.name || "Staff").replace(/[^\w.-]+/g, "_");
+        const safeId = (emp.employeeId?.trim() || emp.id).replace(/[^\w.-]+/g, "_");
+        const folderName = `${safeId}_${safeName}`;
         const folder = zip.folder(folderName);
         if (!folder) continue;
+
         const monthRows: HoursPayload[] = [];
         for (const m of months) {
           if (cancelDownloadRef.current) throw new Error("Download cancelled");
@@ -391,36 +244,45 @@ export default function AdminWorkingHoursPage() {
           });
           activeFetchControllerRef.current = null;
           const json = (await res.json()) as HoursPayload & { error?: string };
-          if (!res.ok) throw new Error(json.error ?? `Failed to load ${m} for ${emp.name}`);
+          if (!res.ok)
+            throw new Error(json.error ?? `Failed to load ${m} for ${emp.name}`);
           monthRows.push(json);
         }
+
         if (cancelDownloadRef.current) throw new Error("Download cancelled");
         const pdf = await buildPdfBytes(monthRows, periodTitle);
-        const suffix = periodMode === "year" ? `${periodYear}` : `${periodStartMonth}-${periodEndMonth}`;
-        folder.file(`working-hours-${suffix}.pdf`, pdf);
+        const suffix =
+          periodMode === "year"
+            ? `${periodYear}`
+            : `${periodStartMonth}-${periodEndMonth}`;
+        folder.file(`MHMS-Teacher-Attendance-${suffix}.pdf`, pdf);
         setDownloadDoneCount(idx + 1);
       }
 
       if (cancelDownloadRef.current) throw new Error("Download cancelled");
-      setDownloadStatus("Compressing ZIP file...");
+      setDownloadStatus("Compressing ZIP package...");
       const out = await zip.generateAsync({
         type: "arraybuffer",
         compression: "DEFLATE",
         compressionOptions: { level: 9 },
       });
+
       setDownloadStatus("Starting download...");
       const blob = new Blob([out], { type: "application/zip" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const suffix = periodMode === "year" ? `${periodYear}` : `${periodStartMonth}-${periodEndMonth}`;
-      a.download = `all-employees-working-hours-${suffix}.zip`;
+      const suffix =
+        periodMode === "year"
+          ? `${periodYear}`
+          : `${periodStartMonth}-${periodEndMonth}`;
+      a.download = `MHMS-All-Staff-Attendance-${suffix}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
       setPeriodOpen(false);
-      toast.success("ZIP download prepared");
+      toast.success("All staff attendance reports downloaded!");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to download ZIP";
       if (/cancelled/i.test(msg)) toast.message("Download cancelled");
@@ -450,115 +312,77 @@ export default function AdminWorkingHoursPage() {
 
   return (
     <div className="p-3 sm:p-6 md:p-8">
-      <div className="mb-6 md:mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Working hours</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Month view per employee: on-site, approved overtime, approved off-site, 240 h cap split.
-        </p>
+      <div className="mb-6 md:mb-8 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
+            Teacher & Staff Attendance
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Monthly attendance records, campus punch-in/out logs, approved leaves, and official downloadable PDFs.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setPeriodOpen(true)}
+            className="gap-2"
+          >
+            <Archive className="size-4 text-blue-500" />
+            <span>Batch Download All (ZIP)</span>
+          </Button>
+          <Link href="/dashboard/admin/reports">
+            <Button type="button" variant="secondary" className="gap-2">
+              <FileSpreadsheet className="size-4" />
+              <span>Advanced Reports</span>
+            </Button>
+          </Link>
+        </div>
       </div>
+
       <div className="mx-auto max-w-5xl space-y-6">
-        <Card>
+        <Card className="border border-zinc-200/90 dark:border-white/10 shadow-sm">
           <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <CardTitle className="text-base">Worker</CardTitle>
-                <CardDescription>Select an employee to load their month.</CardDescription>
-              </div>
-              <Link href="/dashboard/admin/reports">
-                <Button type="button" variant="secondary">
-                  Go to Advanced Reports
-                </Button>
-              </Link>
-            </div>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Users className="size-4 text-blue-500" />
+              Faculty & Staff Member
+            </CardTitle>
+            <CardDescription>
+              Select an employee to view their attendance timeline, punch logs, and export reports.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
               <Skeleton className="h-10 w-full max-w-md rounded-lg" />
             ) : users.length === 0 ? (
-              <p className="text-sm text-zinc-500">No employees found.</p>
+              <p className="text-sm text-zinc-500">No staff members found.</p>
             ) : (
-              <div className="flex flex-wrap items-end gap-4">
-                <div className="min-w-0 flex-1 space-y-2" style={{ maxWidth: "28rem" }}>
-                  <label
-                    htmlFor="admin-wh-worker"
-                    className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
-                  >
-                    Employee
-                  </label>
-                  <SearchableSelect
-                    id="admin-wh-worker"
-                    value={workerId}
-                    onValueChange={setWorkerId}
-                    includeEmpty={false}
-                    options={users.map((u) => ({
-                      value: u.id,
-                      label: u.employeeId?.trim()
-                        ? `${u.employeeId} (${u.name || "Employee"})`
-                        : `${u.name || "Employee"}`,
-                      keywords: [u.employeeId ?? "", u.id, u.name, u.email],
-                    }))}
-                    emptyLabel="— Select —"
-                    searchPlaceholder="Search employees…"
-                  />
-                </div>
-                <div className="flex gap-3">
-                  <div>
-                    <label
-                      htmlFor="admin-wh-wage-rate"
-                      className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400"
-                    >
-                      Regular Rate (Rs./hr)
-                    </label>
-                    <input
-                      id="admin-wh-wage-rate"
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={wageRate ?? ""}
-                      placeholder="0.00"
-                      disabled={!workerId || wageRateLoading}
-                      onChange={(e) =>
-                        setWageRate(e.target.value !== "" ? Number(e.target.value) : null)
-                      }
-                      onBlur={() => void saveWageRate(wageRate)}
-                      className="h-9 w-28 rounded-lg border border-zinc-200 bg-white px-2.5 text-sm shadow-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 disabled:opacity-50 dark:border-white/15 dark:bg-zinc-900 dark:text-white"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="admin-wh-overtime-rate"
-                      className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400"
-                    >
-                      Overtime Rate (Rs./hr)
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        id="admin-wh-overtime-rate"
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        value={overtimeRate ?? ""}
-                        placeholder="0.00"
-                        disabled={!workerId || wageRateLoading}
-                        onChange={(e) =>
-                          setOvertimeRate(e.target.value !== "" ? Number(e.target.value) : null)
-                        }
-                        onBlur={() => void saveOvertimeRate(overtimeRate)}
-                        className="h-9 w-28 rounded-lg border border-zinc-200 bg-white px-2.5 text-sm shadow-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50 dark:border-white/15 dark:bg-zinc-900 dark:text-white"
-                      />
-                      {wageRateSaving && (
-                        <span className="text-xs text-zinc-400">Saving…</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+              <div className="max-w-md space-y-2">
+                <SearchableSelect
+                  id="admin-wh-worker"
+                  value={workerId}
+                  onValueChange={setWorkerId}
+                  includeEmpty={false}
+                  options={users.map((u) => ({
+                    value: u.id,
+                    label: u.employeeId?.trim()
+                      ? `${u.employeeId} - ${u.name || "Teacher"}${u.designation ? ` (${u.designation})` : ""}`
+                      : `${u.name || "Teacher"}${u.designation ? ` (${u.designation})` : ""}`,
+                    keywords: [u.employeeId ?? "", u.id, u.name, u.email, u.designation ?? ""],
+                  }))}
+                  emptyLabel="— Select Faculty Member —"
+                  searchPlaceholder="Search faculty & staff…"
+                />
               </div>
             )}
           </CardContent>
         </Card>
+
         {workerId ? (
-          <WorkingHoursMonthPanel key={workerId} workerId={workerId} wageRate={wageRate ?? undefined} overtimeRate={overtimeRate ?? undefined} />
+          <WorkingHoursMonthPanel key={workerId} workerId={workerId} />
         ) : null}
+
+        {/* Batch Export Modal */}
         {periodOpen && mounted && typeof document !== "undefined"
           ? createPortal(
               <div className="fixed inset-0 z-1360 flex items-center justify-center p-4">
@@ -568,14 +392,17 @@ export default function AdminWorkingHoursPage() {
                   aria-label="Close all-employees export modal"
                   onClick={() => setPeriodOpen(false)}
                 />
-                <Card className="relative z-1 w-full max-w-md border border-white/10 bg-zinc-950 text-zinc-100">
+                <Card className="relative z-1 w-full max-w-md border border-white/10 bg-zinc-950 text-zinc-100 shadow-2xl">
                   <CardHeader>
-                    <CardTitle className="text-base">Download all employees</CardTitle>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Archive className="size-4 text-blue-400" />
+                      Batch Export All Staff Attendance
+                    </CardTitle>
                     <CardDescription>
-                      Creates one ZIP. Inside: one folder per employee, each with a period PDF.
+                      Downloads an archive containing verified attendance PDF reports for all {users.length} teachers and staff.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-3">
+                  <CardContent className="space-y-4">
                     <div className="flex gap-2">
                       <Button
                         type="button"
@@ -583,7 +410,7 @@ export default function AdminWorkingHoursPage() {
                         variant={periodMode === "year" ? "default" : "secondary"}
                         onClick={() => setPeriodMode("year")}
                       >
-                        Yearly
+                        Full Year
                       </Button>
                       <Button
                         type="button"
@@ -591,9 +418,10 @@ export default function AdminWorkingHoursPage() {
                         variant={periodMode === "range" ? "default" : "secondary"}
                         onClick={() => setPeriodMode("range")}
                       >
-                        Custom range
+                        Custom Range
                       </Button>
                     </div>
+
                     {periodMode === "year" ? (
                       <label className="block text-sm">
                         <span className="mb-1 block text-zinc-400">Year</span>
@@ -602,14 +430,18 @@ export default function AdminWorkingHoursPage() {
                           min={2000}
                           max={2100}
                           value={periodYear}
-                          onChange={(e) => setPeriodYear(Number(e.target.value) || new Date().getFullYear())}
+                          onChange={(e) =>
+                            setPeriodYear(
+                              Number(e.target.value) || new Date().getFullYear()
+                            )
+                          }
                           className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2"
                         />
                       </label>
                     ) : (
                       <div className="grid grid-cols-2 gap-2">
                         <label className="block text-sm">
-                          <span className="mb-1 block text-zinc-400">From</span>
+                          <span className="mb-1 block text-zinc-400">From Month</span>
                           <SearchableSelect
                             value={periodStartMonth}
                             onValueChange={setPeriodStartMonth}
@@ -622,7 +454,7 @@ export default function AdminWorkingHoursPage() {
                           />
                         </label>
                         <label className="block text-sm">
-                          <span className="mb-1 block text-zinc-400">To</span>
+                          <span className="mb-1 block text-zinc-400">To Month</span>
                           <SearchableSelect
                             value={periodEndMonth}
                             onValueChange={setPeriodEndMonth}
@@ -636,11 +468,22 @@ export default function AdminWorkingHoursPage() {
                         </label>
                       </div>
                     )}
-                    <div className="flex justify-end gap-2">
-                      <Button type="button" variant="secondary" onClick={() => setPeriodOpen(false)}>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => setPeriodOpen(false)}
+                      >
                         Cancel
                       </Button>
-                      <Button type="button" disabled={downloadingAll} onClick={() => void downloadAllEmployeesZip()}>
+                      <Button
+                        type="button"
+                        disabled={downloadingAll}
+                        onClick={() => void downloadAllEmployeesZip()}
+                        className="gap-1.5"
+                      >
+                        <Download className="size-4" />
                         {downloadingAll ? "Preparing..." : "Download ZIP"}
                       </Button>
                     </div>
@@ -650,51 +493,69 @@ export default function AdminWorkingHoursPage() {
               document.body
             )
           : null}
-        {downloadingAll && mounted && typeof document !== "undefined"
-          ? createPortal(
-              <div className="fixed inset-0 z-1360 flex items-center justify-center p-4">
-                <div className="absolute inset-0 bg-zinc-950/70 backdrop-blur-sm" />
-                <Card className="relative z-1 w-full max-w-lg border border-white/10 bg-zinc-950 text-zinc-100">
-                  <CardHeader>
-                    <CardTitle className="text-base">Preparing download</CardTitle>
-                    <CardDescription>Please wait while we prepare all employees working hours.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="rounded-lg border border-white/10 bg-white/5 p-3 text-sm">
-                      <p className="font-medium">{downloadStatus}</p>
-                      <p className="mt-1 text-zinc-400">
-                        Progress: {downloadDoneCount} / {downloadTotalCount}
-                      </p>
-                      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/10">
+
+        {/* Global Progress Modal for Batch Download */}
+        {downloadingAll &&
+          mounted &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200/20 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-900">
+                <div className="p-6">
+                  <div className="mb-4 flex items-center gap-4">
+                    <div className="relative flex size-12 shrink-0 items-center justify-center">
+                      <div className="absolute inset-0 rounded-full border-2 border-blue-500/20" />
+                      <div className="absolute inset-0 rounded-full border-2 border-t-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)] animate-spin" />
+                      <Loader2 className="size-5 text-blue-500 animate-spin" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+                        {downloadStatus || "Compiling Batch Reports..."}
+                      </h3>
+                      {downloadCurrentEmployee && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400 font-medium truncate max-w-xs mt-0.5">
+                          {downloadCurrentEmployee}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {downloadTotalCount > 0 && (
+                    <div className="space-y-2 mt-6">
+                      <div className="flex justify-between text-xs font-mono text-zinc-500 font-semibold">
+                        <span>Staff Completed</span>
+                        <span>
+                          {downloadDoneCount} / {downloadTotalCount}
+                        </span>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-white/10">
                         <div
-                          className="h-full bg-cyan-500 transition-all"
+                          className="h-full bg-blue-600 transition-all duration-300"
                           style={{
-                            width:
-                              downloadTotalCount > 0
-                                ? `${Math.min(
-                                    100,
-                                    Math.round((downloadDoneCount / downloadTotalCount) * 100)
-                                  )}%`
-                                : "0%",
+                            width: `${Math.round(
+                              (downloadDoneCount / downloadTotalCount) * 100
+                            )}%`,
                           }}
                         />
                       </div>
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-white/5 p-3 text-sm">
-                      <p className="text-zinc-400">Current employee</p>
-                      <p className="font-medium">{downloadCurrentEmployee || "Starting..."}</p>
-                    </div>
-                    <div className="flex justify-end">
-                      <Button type="button" variant="destructive" onClick={cancelAllEmployeesDownload}>
-                        Cancel download
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>,
-              document.body
-            )
-          : null}
+                  )}
+
+                  <div className="mt-6 flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={cancelAllEmployeesDownload}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
       </div>
     </div>
   );

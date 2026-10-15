@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: `${APP_NAME} — Attendance`,
     short_name: APP_NAME,
     description:
-      "Secure worker attendance with GPS, selfie verification, and live tracking.",
+      "Teacher attendance for Munshi Habibullah Mission School in Bemathang, Kargil.",
     start_url: "/",
     scope: "/",
     display: "standalone",

@@ -6,7 +6,7 @@ import { AlertTriangle, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const Z_OVERLAY = "z-[8000]";
+const Z_OVERLAY = "z-[9999]";
 
 function useBodyScrollLock(active: boolean) {
   React.useEffect(() => {

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 /* next-themes sets class="dark" on <html>; Tailwind v4 defaults dark: to prefers-color-scheme only */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -58,4 +59,24 @@ input:-webkit-autofill:focus {
   background: var(--card);
   border: 1px solid var(--border);
   backdrop-filter: blur(16px);
+}
+
+/* Hide scrollbars while allowing touch/wheel scrolling */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Ensure Leaflet stays strictly within its container and doesn't bleed into dialogs or modals */
+.leaflet-container {
+  isolation: isolate;
+  z-index: 1 !important;
+}
+
+.leaflet-top,
+.leaflet-bottom {
+  z-index: 10 !important;
 }

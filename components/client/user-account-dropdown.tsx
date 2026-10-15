@@ -13,35 +13,44 @@ import type { DashboardUser } from "@/components/client/dashboard-user-context";
 const itemClass =
   "flex cursor-pointer select-none items-center gap-2 rounded-lg px-3 py-2 text-sm text-zinc-800 outline-none hover:bg-zinc-100 data-[highlighted]:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-white/10 dark:data-[highlighted]:bg-white/10";
 
-export function UserAccountDropdown({ user }: { user: DashboardUser }) {
+export function UserAccountDropdown({
+  user,
+  hideAvatar = false,
+}: {
+  user: DashboardUser;
+  hideAvatar?: boolean;
+}) {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
           className={cn(
-            "flex max-w-[min(50vw,220px)] items-center gap-2 rounded-full border border-zinc-200/90 bg-white/90 py-1 pl-1 pr-2 transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
+            "flex max-w-[min(50vw,220px)] items-center gap-2 rounded-full border border-zinc-200/90 bg-white/90 py-1 transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
+            hideAvatar ? "px-3.5 py-1.5" : "pl-1 pr-2",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
           )}
           aria-label="Account menu"
         >
-          <span
-            className={cn(
-              "flex size-9 shrink-0 items-center justify-center rounded-full",
-              "bg-gradient-to-br from-violet-600 to-cyan-500 text-xs font-semibold text-white"
-            )}
-          >
-            {nameToInitials(user.name)}
-          </span>
+          {!hideAvatar && (
+            <span
+              className={cn(
+                "flex size-9 shrink-0 items-center justify-center rounded-full",
+                "bg-gradient-to-br from-violet-600 to-cyan-500 text-xs font-semibold text-white"
+              )}
+            >
+              {nameToInitials(user.name)}
+            </span>
+          )}
           <span className="min-w-0 flex-1 truncate text-left text-sm font-medium hidden md:inline-block">{user.name}</span>
-          <span className="min-w-0 flex-1 truncate text-left text-sm font-medium md:hidden">{user.name.split(" ")[0]?.slice(0, 6)}</span>
+          <span className="min-w-0 flex-1 truncate text-left text-sm font-medium md:hidden">{user.name.split(" ")[0]?.slice(0, 10)}</span>
           <ChevronDown className="size-4 shrink-0 opacity-60" aria-hidden />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           className={cn(
-            "z-[100] min-w-[12rem] overflow-hidden rounded-xl border border-zinc-200/90",
+            "z-[9999] min-w-[12rem] overflow-hidden rounded-xl border border-zinc-200/90",
             "bg-white/95 p-1 shadow-2xl backdrop-blur-md dark:border-white/10 dark:bg-zinc-950/95"
           )}
           sideOffset={8}

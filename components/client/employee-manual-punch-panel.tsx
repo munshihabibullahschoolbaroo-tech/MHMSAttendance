@@ -3,16 +3,16 @@
 import * as React from "react";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { toast } from "sonner";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DateField } from "@/components/ui/date-field";
 import { getBrowserTimeZone } from "@/lib/date/time-zone";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Loader2, Send } from "lucide-react";
+import { Input, formFieldLabelClass } from "@/components/ui/input";
+import { Clock, Send, Loader2, Building, AlertCircle } from "lucide-react";
 
 type Assignee = { id: string; name: string; email: string; role: string };
 type Site = { id: string; name: string };
-type Segment = { id: string; siteId: string; inHm: string; outHm: string };
 
 export function EmployeeManualPunchPanel() {
   const [assignees, setAssignees] = React.useState<Assignee[]>([]);
@@ -23,10 +23,8 @@ export function EmployeeManualPunchPanel() {
   const [date, setDate] = React.useState("");
   const [assigneeId, setAssigneeId] = React.useState("");
   const [reason, setReason] = React.useState("");
-  
-  const [segments, setSegments] = React.useState<Segment[]>([
-    { id: "init", siteId: "", inHm: "09:00", outHm: "18:00" },
-  ]);
+  const [inTime, setInTime] = React.useState("09:00");
+  const [outTime, setOutTime] = React.useState("16:00");
 
   const tz = React.useMemo(() => getBrowserTimeZone(), []);
 
@@ -40,19 +38,25 @@ export function EmployeeManualPunchPanel() {
         const token = await u.getIdToken();
         const hdrs = { Authorization: `Bearer ${token}` };
 
-        const [resA, resS] = await Promise.all([
-          fetch("/api/offsite-work/assignees", { headers: hdrs }),
-          fetch("/api/sites", { headers: hdrs }),
-        ]);
-        const dataA = await resA.json();
-        const dataS = await resS.json();
+        const resT = await fetch("/api/school/teachers", { headers: hdrs });
+        const dataT = (await resT.json()) as { teachers?: { id: string; name: string; email: string; role?: string }[] };
 
         if (active) {
-          if (dataA.assignees) setAssignees(dataA.assignees);
-          if (dataS.sites) setSites(dataS.sites);
+          const loadedTeachers = dataT.teachers ?? [];
+          const adminAssignees: Assignee[] = loadedTeachers.map((t) => ({
+            id: t.id,
+            name: t.name,
+            email: t.email,
+            role: t.role || "admin",
+          }));
+          setAssignees(adminAssignees);
+          if (adminAssignees.length > 0) {
+            setAssigneeId(adminAssignees[0]!.id);
+          }
+          setSites([{ id: "main-campus", name: "Main Campus" }]);
         }
-      } catch (e) {
-        toast.error("Failed to load initial data");
+      } catch {
+        toast.error("Failed to load school administrators");
       } finally {
         if (active) setLoadingInitial(false);
       }
@@ -63,37 +67,13 @@ export function EmployeeManualPunchPanel() {
     };
   }, []);
 
-  const handleAddSegment = () => {
-    setSegments((p) => [
-      ...p,
-      { id: Math.random().toString(), siteId: "", inHm: "12:00", outHm: "18:00" },
-    ]);
-  };
-
-  const handleRemoveSegment = (idx: number) => {
-    setSegments((p) => p.filter((_, i) => i !== idx));
-  };
-
-  const handleChangeSegment = (idx: number, key: keyof Segment, val: string) => {
-    setSegments((p) => {
-      const copy = [...p];
-      copy[idx] = { ...copy[idx], [key]: val };
-      return copy;
-    });
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!date) return toast.error("Select a date");
-    if (!assigneeId) return toast.error("Select an admin to approve this");
-    if (reason.trim().length < 3) return toast.error("Write a short reason");
-    if (segments.length === 0) return toast.error("Add at least one work block");
+    if (!date) return toast.error("Please select the date of your missed attendance.");
+    if (!assigneeId) return toast.error("Please select a school admin for approval.");
+    if (reason.trim().length < 3) return toast.error("Please provide a reason for the missing punch.");
 
-    for (let i = 0; i < segments.length; i++) {
-      const s = segments[i];
-      if (!s.siteId) return toast.error(`Select site for block ${i + 1}`);
-      if (!s.inHm || !s.outHm) return toast.error(`Set in/out times for block ${i + 1}`);
-    }
+    const defaultSiteId = sites[0]?.id || "main-campus";
 
     setSubmitting(true);
     try {
@@ -102,60 +82,80 @@ export function EmployeeManualPunchPanel() {
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
 
-      const payload = {
-        date,
-        assigneeAdminUid: assigneeId,
-        reason: reason.trim(),
-        segments: segments.map((s) => ({
-          siteId: s.siteId,
-          inHm: s.inHm,
-          outHm: s.outHm,
-        })),
-      };
-
       const res = await fetch("/api/manual-punch", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          date,
+          assigneeAdminUid: assigneeId,
+          reason: reason.trim(),
+          segments: [
+            {
+              siteId: defaultSiteId,
+              inHm: inTime,
+              outHm: outTime,
+            },
+          ],
+        }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to submit request");
+      const resJson = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(resJson.error ?? "Failed to submit missed attendance request");
+      }
 
-      toast.success("Missed attendance request submitted!");
+      toast.success("Missed attendance request submitted for admin approval!");
       setDate("");
       setReason("");
-      setSegments([{ id: Math.random().toString(), siteId: "", inHm: "09:00", outHm: "18:00" }]);
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Submission failed");
     } finally {
       setSubmitting(false);
     }
   };
 
   if (loadingInitial) {
-    return <div className="text-sm text-zinc-500">Loading form...</div>;
+    return (
+      <div className="flex min-h-[200px] items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-2xl space-y-6">
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card>
-          <CardContent className="space-y-5 p-6">
-            <div className="grid gap-5 sm:grid-cols-2">
+        <Card className="rounded-2xl border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] shadow-sm overflow-hidden">
+          <CardHeader className="pb-4 border-b border-zinc-100 dark:border-white/5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                <Clock className="size-5" />
+              </div>
+              <div>
+                <CardTitle className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                  Missed Attendance Details
+                </CardTitle>
+                <CardDescription className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Request timeline correction for dates you were present at school.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5 pt-5">
+            <div className="grid gap-4 sm:grid-cols-2">
               <DateField
                 id="manual-punch-date"
-                label="Date of Missing Punch"
+                label="Date of Missing Attendance"
                 value={date}
                 onChange={setDate}
                 timeZone={tz}
               />
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  Assign to Admin <span className="text-red-500">*</span>
+                  Assign to School Admin <span className="text-red-500">*</span>
                 </label>
                 <SearchableSelect
                   value={assigneeId}
@@ -170,90 +170,61 @@ export function EmployeeManualPunchPanel() {
               </div>
             </div>
 
+            {/* In Time and Out Time */}
+            <div className="grid gap-4 sm:grid-cols-2 rounded-2xl border border-zinc-200/80 bg-zinc-50/70 p-4 dark:border-white/5 dark:bg-white/[0.02]">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  School Arrival Time (Punch In)
+                </label>
+                <input
+                  type="time"
+                  required
+                  value={inTime}
+                  onChange={(e) => setInTime(e.target.value)}
+                  className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3.5 text-sm font-semibold text-zinc-900 focus:border-blue-500 focus:outline-none dark:border-white/15 dark:bg-zinc-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  School Departure Time (Punch Out)
+                </label>
+                <input
+                  type="time"
+                  required
+                  value={outTime}
+                  onChange={(e) => setOutTime(e.target.value)}
+                  className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3.5 text-sm font-semibold text-zinc-900 focus:border-blue-500 focus:outline-none dark:border-white/15 dark:bg-zinc-900 dark:text-white"
+                />
+              </div>
+              <p className="sm:col-span-2 text-[11px] text-zinc-500 flex items-center gap-1.5 pt-1">
+                <Building className="h-3.5 w-3.5 shrink-0 text-blue-500" />
+                <span>Campus: Munshi Habibullah Mission School (Bemathang Campus, Kargil)</span>
+              </p>
+            </div>
+
+            {/* Reason */}
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                Reason <span className="text-red-500">*</span>
+                Reason for Missing Attendance <span className="text-red-500">*</span>
               </label>
               <textarea
+                required
+                rows={3}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. Forgot to punch out because phone died."
-                className="h-20 w-full rounded-lg border border-zinc-200 bg-white p-3 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-white/10 dark:bg-zinc-900/50 dark:text-white"
+                placeholder="e.g. Phone battery ran out upon arrival, or was assigned to special school duty."
+                className="w-full rounded-xl border border-zinc-300 bg-white p-3 text-xs text-zinc-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-white/15 dark:bg-zinc-900 dark:text-white"
               />
             </div>
           </CardContent>
         </Card>
 
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Work Segments / Timeline
-            </h2>
-            <Button type="button" variant="outline" size="sm" onClick={handleAddSegment}>
-              <Plus className="mr-1.5 size-4" /> Add Block
-            </Button>
-          </div>
-          <div className="space-y-3">
-            {segments.map((seg, i) => (
-              <Card key={seg.id}>
-                <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-end">
-                  <div className="flex-1">
-                    <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                      Work Site (Block {i + 1})
-                    </label>
-                    <SearchableSelect
-                      value={seg.siteId}
-                      onValueChange={(val) => handleChangeSegment(i, "siteId", val)}
-                      options={sites.map((s) => ({
-                        value: s.id,
-                        label: s.name,
-                        keywords: [s.name],
-                      }))}
-                      emptyLabel="Select site..."
-                    />
-                  </div>
-                  <div className="w-full sm:w-32">
-                    <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                      Start Time
-                    </label>
-                    <input
-                      type="time"
-                      value={seg.inHm}
-                      onChange={(e) => handleChangeSegment(i, "inHm", e.target.value)}
-                      className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-white/10 dark:bg-zinc-900/50 dark:text-white"
-                    />
-                  </div>
-                  <div className="w-full sm:w-32">
-                    <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                      End Time
-                    </label>
-                    <input
-                      type="time"
-                      value={seg.outHm}
-                      onChange={(e) => handleChangeSegment(i, "outHm", e.target.value)}
-                      className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-white/10 dark:bg-zinc-900/50 dark:text-white"
-                    />
-                  </div>
-                  {segments.length > 1 && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveSegment(i)}
-                      className="text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/50"
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-        </div>
-
-        <Button type="submit" disabled={submitting} className="w-full sm:w-auto">
-          {submitting ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Send className="mr-2 size-4" />}
+        <Button
+          type="submit"
+          disabled={submitting}
+          className="h-12 w-full gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl shadow-md shadow-blue-500/20 transition-all active:scale-[0.99]"
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           Submit Missed Attendance Request
         </Button>
       </form>

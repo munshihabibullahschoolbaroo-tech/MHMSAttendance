@@ -5,7 +5,6 @@ import { DashboardUserProvider } from "@/components/client/dashboard-user-contex
 import { OnboardingGate } from "@/components/client/onboarding-gate";
 import { WorkspaceAccessGate } from "@/components/client/workspace-access-gate";
 import { RequireAuth } from "@/components/client/require-auth";
-import { LiveTrackingProvider } from "@/components/client/live-tracking-provider";
 
 export default function DashboardLayout({
   children,
@@ -19,9 +18,7 @@ export default function DashboardLayout({
           <OnboardingGate>
             <WorkspaceAccessGate>
               <BrowserTimeZoneSync />
-              <LiveTrackingProvider>
-                <DashboardChrome>{children}</DashboardChrome>
-              </LiveTrackingProvider>
+              <DashboardChrome>{children}</DashboardChrome>
             </WorkspaceAccessGate>
           </OnboardingGate>
         </CalendarModeProvider>

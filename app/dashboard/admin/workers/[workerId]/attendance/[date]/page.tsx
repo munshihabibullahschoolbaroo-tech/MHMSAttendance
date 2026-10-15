@@ -65,7 +65,7 @@ export default function AdminWorkerDayAttendancePage() {
           loading={loading}
           error={err}
           backHref="/dashboard/admin/workers"
-          backLabel="Workers"
+          backLabel="Teachers"
           showWorkerHeader
         />
       </div>

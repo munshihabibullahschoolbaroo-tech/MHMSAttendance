@@ -19,9 +19,13 @@ export async function createNotification(
       | "login_request"
       | "login_approved"
       | "login_rejected"
+      | "leave_request"
+      | "leave_approved"
+      | "leave_rejected"
       | "manual_punch_request"
       | "manual_punch_approved"
       | "manual_punch_rejected";
+
     /** For assignment: sites the worker may use for check-in (drives Work deep link). */
     assignedSiteIds?: string[];
     /** Optional link for CTAs in the notification page. */

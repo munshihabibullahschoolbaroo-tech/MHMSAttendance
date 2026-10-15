@@ -1,10 +1,14 @@
-# LetsAttend
+# MHMSAttendance
 
-Attendance app: **Next.js**, **Firebase Auth + Firestore**, **Vercel Blob**, GPS check-in/out, admin dashboard.
+Teacher attendance for **Munshi Habibullah Mission School**, Bemathang, Kargil.
+
+**Next.js**, **Firebase Auth + Firestore**, **Vercel Blob**, GPS login inside a fixed campus area.
 
 ## Setup
 
-See [docs/SETUP.md](./docs/SETUP.md) for Firebase, env vars, Firestore rules, and Vercel.
+School sign-in, rules, indexes, and Blob: [docs/MHMS_SETUP.md](./docs/MHMS_SETUP.md).
+
+The older worker-attendance notes are still in [docs/SETUP.md](./docs/SETUP.md).
 
 ## Develop
 

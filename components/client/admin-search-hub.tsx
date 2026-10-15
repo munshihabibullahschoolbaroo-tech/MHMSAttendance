@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import * as React from "react";
-import { Search, X } from "lucide-react";
+import { Search, X, Users, Calendar, ArrowRight } from "lucide-react";
 import { AttendanceCalendar } from "@/components/client/attendance-calendar";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +12,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { AssignWorkSitesModal } from "@/components/client/assign-work-sites-modal";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,21 +22,15 @@ type UserRow = {
   name: string;
   email: string;
   role: string;
-  assignedSites?: string[];
+  designation?: string;
 };
-type SiteRow = { id: string; name?: string };
 
 export function AdminSearchHub() {
-  const router = useRouter();
   const [users, setUsers] = React.useState<UserRow[]>([]);
-  const [sites, setSites] = React.useState<SiteRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState<string | null>(null);
   const [qWorker, setQWorker] = React.useState("");
-  const [qSite, setQSite] = React.useState("");
   const [workerModal, setWorkerModal] = React.useState<UserRow | null>(null);
-  const [assignWorker, setAssignWorker] = React.useState<UserRow | null>(null);
-  const [siteModal, setSiteModal] = React.useState<SiteRow | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -50,17 +42,13 @@ export function AdminSearchHub() {
         const u = auth.currentUser;
         if (!u) throw new Error("Not signed in");
         const token = await u.getIdToken();
-        const [uRes, sRes] = await Promise.all([
-          fetch("/api/admin/users", { headers: { Authorization: `Bearer ${token}` } }),
-          fetch("/api/sites", { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
+        const uRes = await fetch("/api/admin/users", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         const uData = (await uRes.json()) as { users?: UserRow[]; error?: string };
-        const sData = (await sRes.json()) as { sites?: SiteRow[]; error?: string };
         if (!uRes.ok) throw new Error(uData.error ?? "Failed to load users");
-        if (!sRes.ok) throw new Error(sData.error ?? "Failed to load sites");
         if (cancelled) return;
         setUsers(uData.users ?? []);
-        setSites(sData.sites ?? []);
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : "Failed");
       } finally {
@@ -77,268 +65,153 @@ export function AdminSearchHub() {
   const workersFiltered = ql
     ? users.filter(
         (r) =>
-          r.name.toLowerCase().includes(ql) ||
-          r.email.toLowerCase().includes(ql) ||
-          r.id.toLowerCase().includes(ql)
+          r.name?.toLowerCase().includes(ql) ||
+          r.email?.toLowerCase().includes(ql) ||
+          r.id?.toLowerCase().includes(ql) ||
+          (r.employeeId && r.employeeId.toLowerCase().includes(ql)) ||
+          (r.designation && r.designation.toLowerCase().includes(ql))
       )
     : users;
 
-  const qs = qSite.trim().toLowerCase();
-  const sitesFiltered = qs
-    ? sites.filter((s) => {
-        const n = typeof s.name === "string" ? s.name : "";
-        return n.toLowerCase().includes(qs) || s.id.toLowerCase().includes(qs);
-      })
-    : sites;
-
   return (
     <>
-      <AssignWorkSitesModal
-        worker={assignWorker}
-        open={assignWorker != null}
-        onOpenChange={(open) => {
-          if (!open) setAssignWorker(null);
-        }}
-        onSaved={() => {
-          void (async () => {
-            try {
-              const auth = getFirebaseAuth();
-              const u = auth.currentUser;
-              if (!u) return;
-              const token = await u.getIdToken();
-              const uRes = await fetch("/api/admin/users", {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              const uData = (await uRes.json()) as { users?: UserRow[]; error?: string };
-              if (uRes.ok) setUsers(uData.users ?? []);
-            } catch {
-              /* ignore */
-            }
-          })();
-        }}
-      />
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Search workers</CardTitle>
-            <CardDescription>
-              Find by employee ID, name, or email. Open a profile to see the attendance calendar; day cells use the
-              same timeline as the Workers page.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
-              <input
-                type="search"
-                placeholder="Search workers…"
-                className="w-full rounded-xl border border-zinc-200/90 bg-white/90 py-2 pl-10 pr-3 text-sm text-zinc-900 dark:border-white/10 dark:bg-black/40 dark:text-inherit"
-                value={qWorker}
-                onChange={(e) => setQWorker(e.target.value)}
-                disabled={loading}
-              />
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <span className="flex size-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+              <Users className="size-4" />
+            </span>
+            <CardTitle className="text-lg">Search Teachers & Staff</CardTitle>
+          </div>
+          <CardDescription>
+            Quickly search faculty and staff by name, email, employee ID, or role. Click a teacher to inspect their attendance calendar.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="relative">
+            <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+            <input
+              type="search"
+              placeholder="Search by teacher name, ID, or designation…"
+              className="w-full rounded-xl border border-zinc-200/90 bg-white py-2.5 pl-10 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100 outline-none focus:ring-2 focus:ring-blue-500"
+              value={qWorker}
+              onChange={(e) => setQWorker(e.target.value)}
+              disabled={loading}
+            />
+          </div>
+          {loading ? (
+            <div className="space-y-2" aria-hidden>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full rounded-xl" />
+              ))}
             </div>
-            {loading ? (
-              <div className="space-y-2" aria-hidden>
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full rounded-lg" />
-                ))}
-              </div>
-            ) : err ? (
-              <p className="text-sm text-red-400">{err}</p>
-            ) : (
-              <ul className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/90 p-2 dark:border-white/10 dark:bg-white/[0.02]">
-                {workersFiltered.length === 0 ? (
-                  <li className="px-2 py-3 text-sm text-zinc-500">No matches.</li>
-                ) : (
-                  workersFiltered.slice(0, 40).map((r) => (
-                    <li key={r.id}>
-                      <div
-                        className={cn(
-                          "flex items-stretch gap-2 rounded-lg px-2 py-1.5 transition-colors",
-                          "hover:bg-zinc-100 dark:hover:bg-white/[0.06]"
-                        )}
-                      >
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 flex-col items-start rounded-md px-0 py-0 text-left text-sm"
-                          onClick={() => setWorkerModal(r)}
-                        >
-                          <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                            {r.employeeId?.trim()
-                              ? `${r.employeeId} (${r.name || "Employee"})`
-                              : r.name || "Employee"}
+          ) : err ? (
+            <p className="text-sm text-red-400">{err}</p>
+          ) : (
+            <ul className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/70 p-2 dark:border-white/10 dark:bg-white/[0.02]">
+              {workersFiltered.length === 0 ? (
+                <li className="px-3 py-4 text-center text-sm text-zinc-500">
+                  No matching teachers found.
+                </li>
+              ) : (
+                workersFiltered.slice(0, 40).map((r) => (
+                  <li key={r.id}>
+                    <div
+                      className={cn(
+                        "flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition-colors",
+                        "hover:bg-zinc-100 dark:hover:bg-white/[0.06] cursor-pointer"
+                      )}
+                      onClick={() => setWorkerModal(r)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-sm text-zinc-900 dark:text-zinc-100 truncate">
+                            {r.name || "Staff Member"}
                           </span>
-                        </button>
-                        <div className="flex shrink-0 flex-col justify-center gap-1 sm:flex-row sm:items-center">
-                          {r.role === "employee" ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              className="h-8 text-xs"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setAssignWorker(r);
-                              }}
-                            >
-                              Assign
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            className="h-8 text-xs text-cyan-700 hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setWorkerModal(r);
-                            }}
+                          {r.employeeId && (
+                            <span className="rounded-md bg-zinc-200/70 px-1.5 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-white/10 dark:text-zinc-300">
+                              {r.employeeId}
+                            </span>
+                          )}
+                          <span
+                            className={cn(
+                              "rounded-md px-1.5 py-0.5 text-[10px] font-semibold capitalize",
+                              r.role === "admin" || r.role === "super_admin"
+                                ? "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300"
+                                : "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                            )}
                           >
-                            View
-                          </Button>
+                            {r.role.replace("_", " ")}
+                          </span>
+                        </div>
+                        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
+                          {r.designation ? `${r.designation} • ` : ""}
+                          {r.email}
                         </div>
                       </div>
-                    </li>
-                  ))
-                )}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Search sites</CardTitle>
-            <CardDescription>
-              Find a work location. Open to jump to the full Sites pipeline for that location.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
-              <input
-                type="search"
-                placeholder="Search sites…"
-                className="w-full rounded-xl border border-zinc-200/90 bg-white/90 py-2 pl-10 pr-3 text-sm text-zinc-900 dark:border-white/10 dark:bg-black/40 dark:text-inherit"
-                value={qSite}
-                onChange={(e) => setQSite(e.target.value)}
-                disabled={loading}
-              />
-            </div>
-            {loading ? (
-              <div className="space-y-2" aria-hidden>
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full rounded-lg" />
-                ))}
-              </div>
-            ) : err ? (
-              <p className="text-sm text-red-400">{err}</p>
-            ) : (
-              <ul className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-zinc-200/80 bg-zinc-50/90 p-2 dark:border-white/10 dark:bg-white/[0.02]">
-                {sitesFiltered.length === 0 ? (
-                  <li className="px-2 py-3 text-sm text-zinc-500">No matches.</li>
-                ) : (
-                  sitesFiltered.slice(0, 40).map((s) => (
-                    <li key={s.id}>
-                      <button
-                        type="button"
-                        className="flex w-full flex-col items-start rounded-lg px-3 py-2 text-left text-sm text-zinc-900 transition-colors hover:bg-zinc-100 dark:text-inherit dark:hover:bg-white/10"
-                        onClick={() => setSiteModal(s)}
-                      >
-                        <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                          {typeof s.name === "string" && s.name.trim() ? s.name : s.id}
-                        </span>
-                      </button>
-                    </li>
-                  ))
-                )}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 gap-1 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setWorkerModal(r);
+                          }}
+                        >
+                          <Calendar className="size-3.5" />
+                          <span>Calendar</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </li>
+                ))
+              )}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
+      {/* Teacher Attendance Calendar Modal */}
       {workerModal ? (
         <div
-          className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm dark:bg-black/70"
+          className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
-          aria-label="Worker calendar"
+          aria-label="Teacher Calendar"
         >
-          <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-2xl dark:border-white/10 dark:bg-zinc-950">
+          <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-white/10 dark:bg-zinc-950">
             <button
               type="button"
-              className="absolute right-3 top-3 rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100"
+              className="absolute right-4 top-4 rounded-full p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100"
               aria-label="Close"
               onClick={() => setWorkerModal(null)}
             >
               <X className="size-5" />
             </button>
             <div className="mb-4 pr-10">
-              <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+              <p className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
                 {workerModal.employeeId?.trim()
-                  ? `${workerModal.employeeId} (${workerModal.name || "Employee"})`
-                  : workerModal.name || "Employee"}
+                  ? `${workerModal.name || "Teacher"} (${workerModal.employeeId})`
+                  : workerModal.name || "Teacher"}
               </p>
+              <p className="text-xs text-zinc-500 mt-0.5">{workerModal.email}</p>
             </div>
             <AttendanceCalendar
               workerId={workerModal.id}
-              title="Attendance"
-              description="Tap a day for the full timeline in work time (your profile zone), same as Workers."
+              title="Attendance Calendar"
+              description="Tap a day to view daily clock-in / clock-out punches."
               adminDayDetailBasePath="/dashboard/admin/workers"
             />
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" size="sm" asChild>
+            <div className="mt-4 flex flex-wrap justify-between items-center gap-2 border-t border-zinc-100 pt-3 dark:border-white/10">
+              <Button type="button" variant="default" size="sm" asChild>
                 <Link href={`/dashboard/admin/workers?worker=${encodeURIComponent(workerModal.id)}`}>
-                  Open in Workers
+                  Open in Teachers Directory <ArrowRight className="size-3.5 ml-1" />
                 </Link>
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={() => setWorkerModal(null)}>
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {siteModal ? (
-        <div
-          className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm dark:bg-black/70"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Site"
-        >
-          <div className="relative w-full max-w-md rounded-2xl border border-zinc-200/90 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-zinc-950">
-            <button
-              type="button"
-              className="absolute right-3 top-3 rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-white/10"
-              aria-label="Close"
-              onClick={() => setSiteModal(null)}
-            >
-              <X className="size-5" />
-            </button>
-            <h2 className="pr-10 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              {typeof siteModal.name === "string" && siteModal.name.trim()
-                ? siteModal.name
-                : siteModal.id}
-            </h2>
-                        <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
-              Open the Sites pipeline with this location selected — same detail tabs (overview, edit, photos,
-              overtime, live map).
-            </p>
-            <div className="mt-6 flex flex-wrap gap-2">
-              <Button
-                type="button"
-                onClick={() => {
-                  router.push(`/dashboard/admin/sites/${encodeURIComponent(siteModal.id)}`);
-                  setSiteModal(null);
-                }}
-              >
-                Open site details
-              </Button>
-              <Button type="button" variant="secondary" onClick={() => setSiteModal(null)}>
+              <Button type="button" variant="outline" size="sm" onClick={() => setWorkerModal(null)}>
                 Close
               </Button>
             </div>

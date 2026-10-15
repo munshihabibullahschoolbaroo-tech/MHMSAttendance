@@ -1,11 +1,10 @@
-import { EmployeeWorkRouteShell } from "@/components/client/employee-work-route-shell";
+import { TeacherAttendanceHome } from "@/components/client/teacher-attendance-home";
 
 export default function EmployeeCheckInPage() {
   return (
-    <EmployeeWorkRouteShell
-      title="Check in"
-      description=""
-      section="check-in"
-    />
+    <div className="p-3 sm:p-6 md:p-8">
+      <TeacherAttendanceHome />
+    </div>
   );
 }
+

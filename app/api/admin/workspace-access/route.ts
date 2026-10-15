@@ -38,14 +38,16 @@ export async function POST(req: Request) {
   const workerRef = db.collection("users").doc(parsed.data.workerId);
   const workerSnap = await workerRef.get();
   if (!workerSnap.exists) return jsonError("User not found", 404);
-  const role = workerSnap.get("role") as string | undefined;
-  if (role !== "employee") {
-    return jsonError("Only employee accounts use workspace access review", 400);
+  const rawRole = workerSnap.get("role") as string | undefined;
+  const role = rawRole || "employee";
+  if (role === "admin" || role === "super_admin") {
+    return jsonError("Admin accounts do not require workspace access review", 400);
   }
 
   const status = parsed.data.action === "approve" ? "approved" : "rejected";
   await workerRef.set(
     {
+      role: role,
       workspaceAccessStatus: status,
       workspaceAccessUpdatedAt: FieldValue.serverTimestamp(),
     },

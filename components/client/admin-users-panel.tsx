@@ -2,8 +2,10 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Search, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
+import { Search, Trash2, X, AlertCircle, GraduationCap, CheckCircle2, FileCheck, Bell, Loader2 } from "lucide-react";
 import { AttendanceCalendar } from "@/components/client/attendance-calendar";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,13 +15,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { AssignWorkSitesModal } from "@/components/client/assign-work-sites-modal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { TableRowsSkeleton } from "@/components/client/dashboard-skeletons";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
 
 const TABLE_PAGE_SIZE = 15;
 
@@ -29,6 +31,36 @@ type Row = {
   name: string;
   email: string;
   role: string;
+  phone?: string | null;
+  schoolWingId?: string | null;
+  position?: string | null;
+  designation?: string | null;
+  isClassTeacher?: boolean;
+  schoolClassId?: string | null;
+  schoolSectionId?: string | null;
+  hasPendingLeave?: boolean;
+  pendingLeave?: {
+    id: string;
+    type: string;
+    startDate: string;
+    endDate: string;
+    reason: string;
+    documentUrl?: string | null;
+    createdAt?: unknown;
+  } | null;
+  onLeaveToday?: boolean;
+  todayLeaveType?: string | null;
+  activeLeave?: {
+    id: string;
+    type: string;
+    startDate: string;
+    endDate: string;
+    reason: string;
+    status: string;
+    adminNotes?: string | null;
+    reviewedByEmail?: string | null;
+  } | null;
+  workspaceAccessStatus?: "pending" | "approved" | "rejected";
   assignedSites?: string[];
 };
 
@@ -65,12 +97,58 @@ export function AdminUsersPanel() {
 
   const [calendarOpen, setCalendarOpen] = React.useState(false);
   const [calendarWorkerId, setCalendarWorkerId] = React.useState("");
+  const [selectedTeacher, setSelectedTeacher] = React.useState<Row | null>(null);
+
+  // Leave review / inspection state
+  const [leaveReviewTarget, setLeaveReviewTarget] = React.useState<{
+    teacher: Row;
+    leave: {
+      id: string;
+      type: string;
+      startDate: string;
+      endDate: string;
+      reason: string;
+      status?: string;
+      documentUrl?: string | null;
+      adminNotes?: string | null;
+      reviewedByEmail?: string | null;
+    };
+    isPending: boolean;
+  } | null>(null);
+  const [reviewBusy, setReviewBusy] = React.useState(false);
+  const [rejectNotes, setRejectNotes] = React.useState("");
+  const [showRejectBox, setShowRejectBox] = React.useState(false);
+
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => {
     setMounted(true);
   }, []);
 
-  useBodyScrollLock(calendarOpen);
+  useBodyScrollLock(calendarOpen || selectedTeacher != null || leaveReviewTarget != null);
+
+  const approveAccess = async (workerId: string) => {
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) throw new Error("Not signed in");
+      const token = await u.getIdToken();
+      const res = await fetch("/api/admin/workspace-access", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ workerId, action: "approve" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to approve access");
+      toast.success("Teacher workspace access approved!");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to approve access");
+    }
+  };
+
 
   React.useEffect(() => {
     if (!calendarOpen) return;
@@ -89,7 +167,7 @@ export function AdminUsersPanel() {
       const u = auth.currentUser;
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
-      const res = await fetch("/api/admin/users", {
+      const res = await fetch("/api/admin/users?fresh=1", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json()) as { users?: Row[]; error?: string };
@@ -102,6 +180,40 @@ export function AdminUsersPanel() {
       setLoading(false);
     }
   }, []);
+
+  const handleReviewLeave = async (leaveId: string, action: "approve" | "reject", notes?: string) => {
+    setReviewBusy(true);
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) throw new Error("Not signed in");
+      const token = await u.getIdToken();
+      const res = await fetch("/api/school/leave/review", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ leaveId, action, notes: notes || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to review leave application");
+
+      toast.success(
+        action === "approve"
+          ? "Leave application approved successfully!"
+          : "Leave application marked as rejected."
+      );
+      setLeaveReviewTarget(null);
+      setShowRejectBox(false);
+      setRejectNotes("");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error reviewing leave");
+    } finally {
+      setReviewBusy(false);
+    }
+  };
 
   React.useEffect(() => {
     void load();
@@ -210,14 +322,12 @@ export function AdminUsersPanel() {
   const canManageAdmins = viewer?.role === "super_admin";
   const canDeleteUsers = viewer?.role === "admin" || viewer?.role === "super_admin";
 
-  const demoteAdmin = async (email: string, name: string) => {
-    if (
-      !window.confirm(
-        `Remove admin access for “${name}” (${email})? They will become an employee.`
-      )
-    ) {
-      return;
-    }
+  const [demoteTarget, setDemoteTarget] = React.useState<{ email: string; name: string } | null>(null);
+  const [demoting, setDemoting] = React.useState(false);
+
+  const confirmDemoteAdmin = async () => {
+    if (!demoteTarget) return;
+    setDemoting(true);
     setResetMsg(null);
     try {
       const auth = getFirebaseAuth();
@@ -230,13 +340,16 @@ export function AdminUsersPanel() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: demoteTarget.email }),
       });
       const data = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Failed");
+      if (!res.ok) throw new Error(data.error ?? "Failed to demote admin");
       await load();
+      setDemoteTarget(null);
     } catch (e) {
       setResetMsg(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setDemoting(false);
     }
   };
 
@@ -322,7 +435,7 @@ export function AdminUsersPanel() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `workers-archive-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.download = `mhms-teachers-archive-${new Date().toISOString().slice(0, 10)}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -414,18 +527,423 @@ export function AdminUsersPanel() {
         )
       : null;
 
+  const leaveReviewModal =
+    leaveReviewTarget && mounted && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="fixed inset-0 z-[1400] flex items-center justify-center p-4 animate-in fade-in duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+              onClick={() => {
+                if (reviewBusy) return;
+                setLeaveReviewTarget(null);
+                setShowRejectBox(false);
+              }}
+            />
+            <Card className="relative z-[1] w-full max-w-lg border-zinc-200 shadow-2xl dark:border-white/10 dark:bg-zinc-950 overflow-hidden">
+              {/* Header banner */}
+              <div
+                className={cn(
+                  "px-5 py-4 flex items-center justify-between border-b",
+                  leaveReviewTarget.isPending
+                    ? "bg-amber-500/10 border-amber-500/20 text-amber-900 dark:text-amber-200"
+                    : "bg-blue-500/10 border-blue-500/20 text-blue-900 dark:text-blue-200"
+                )}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className={cn(
+                      "p-2 rounded-xl text-white shadow-xs",
+                      leaveReviewTarget.isPending ? "bg-amber-600" : "bg-blue-600"
+                    )}
+                  >
+                    <Bell className="size-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm">
+                      {leaveReviewTarget.isPending ? "Leave Application Review" : "Approved Leave Record"}
+                    </h3>
+                    <p className="text-[11px] opacity-80">
+                      Munshi Habibullah Mission School • Staff Leave Portal
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (reviewBusy) return;
+                    setLeaveReviewTarget(null);
+                    setShowRejectBox(false);
+                  }}
+                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-black/10 hover:text-zinc-100 transition-colors"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              <CardContent className="p-5 space-y-4 text-xs">
+                {/* Teacher Profile Summary */}
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-zinc-50 dark:bg-white/[0.03] border border-zinc-200 dark:border-white/10">
+                  <div className="size-11 rounded-xl bg-blue-600 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-xs">
+                    {leaveReviewTarget.teacher.name ? leaveReviewTarget.teacher.name.charAt(0).toUpperCase() : "T"}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h4 className="font-bold text-zinc-900 dark:text-zinc-100 text-sm truncate">
+                      {leaveReviewTarget.teacher.name}
+                    </h4>
+                    <p className="text-zinc-500 truncate">{leaveReviewTarget.teacher.email}</p>
+                    <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-zinc-400">
+                      <span className="capitalize font-medium text-zinc-300">
+                        {leaveReviewTarget.teacher.designation || leaveReviewTarget.teacher.position || "Teacher"}
+                      </span>
+                      {leaveReviewTarget.teacher.schoolWingId && (
+                        <span>• {leaveReviewTarget.teacher.schoolWingId.replace(/_/g, " ").toUpperCase()}</span>
+                      )}
+                      {leaveReviewTarget.teacher.isClassTeacher && leaveReviewTarget.teacher.schoolClassId && (
+                        <span className="text-blue-500 font-medium">
+                          • {leaveReviewTarget.teacher.schoolClassId} Incharge
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Leave Period & Type */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-xl border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-white/[0.02]">
+                    <span className="text-[11px] text-zinc-400 font-medium">Leave Type</span>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded-md text-xs font-bold uppercase",
+                          leaveReviewTarget.leave.type === "medical"
+                            ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"
+                            : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                        )}
+                      >
+                        {leaveReviewTarget.leave.type} Leave
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-white/[0.02]">
+                    <span className="text-[11px] text-zinc-400 font-medium">Leave Duration</span>
+                    <p className="mt-1 font-bold text-zinc-800 dark:text-zinc-200">
+                      {leaveReviewTarget.leave.startDate} to {leaveReviewTarget.leave.endDate}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Stated Reason */}
+                <div className="p-3.5 rounded-xl border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-white/[0.02] space-y-1">
+                  <span className="text-[11px] text-zinc-400 font-medium">Teacher&apos;s Application Reason:</span>
+                  <p className="text-xs text-zinc-700 dark:text-zinc-300 italic whitespace-pre-wrap font-sans">
+                    &ldquo;{leaveReviewTarget.leave.reason}&rdquo;
+                  </p>
+                </div>
+
+                {/* Medical Document attached (if medical) */}
+                {leaveReviewTarget.leave.documentUrl && (
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs">
+                    <span className="font-medium text-blue-800 dark:text-blue-300 flex items-center gap-1.5">
+                      <FileCheck className="size-4" /> Medical Certificate Attached
+                    </span>
+                    <a
+                      href={leaveReviewTarget.leave.documentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[11px] transition-colors"
+                    >
+                      View Document
+                    </a>
+                  </div>
+                )}
+
+                {/* Status indicator if already approved */}
+                {!leaveReviewTarget.isPending && (
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300 space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold">
+                      <CheckCircle2 className="size-4 text-emerald-500" />
+                      Leave is Approved & Currently Active
+                    </div>
+                    {leaveReviewTarget.leave.reviewedByEmail && (
+                      <p className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80">
+                        Approved by: {leaveReviewTarget.leave.reviewedByEmail}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Reject note box */}
+                {showRejectBox && (
+                  <div className="p-3 rounded-xl border border-red-500/30 bg-red-500/10 space-y-2">
+                    <span className="text-[11px] font-semibold text-red-700 dark:text-red-300">
+                      Reason for Not Approving (Sent to Teacher):
+                    </span>
+                    <Input
+                      value={rejectNotes}
+                      onChange={(e) => setRejectNotes(e.target.value)}
+                      placeholder="e.g. Inadequate medical doc, or scheduled exam duty"
+                      className="text-xs"
+                      disabled={reviewBusy}
+                    />
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 dark:border-white/10">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={reviewBusy}
+                    onClick={() => {
+                      setLeaveReviewTarget(null);
+                      setShowRejectBox(false);
+                    }}
+                    className="text-xs"
+                  >
+                    Close
+                  </Button>
+
+                  {leaveReviewTarget.isPending ? (
+                    <div className="flex items-center gap-2">
+                      {!showRejectBox ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={reviewBusy}
+                          onClick={() => setShowRejectBox(true)}
+                          className="text-xs text-red-500 hover:text-red-400 border-red-500/30 hover:bg-red-500/10"
+                        >
+                          <X className="size-3.5 mr-1" />
+                          Not Approve
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          disabled={reviewBusy}
+                          onClick={() => void handleReviewLeave(leaveReviewTarget.leave.id, "reject", rejectNotes)}
+                          className="text-xs"
+                        >
+                          {reviewBusy ? <Loader2 className="size-3.5 animate-spin mr-1" /> : <X className="size-3.5 mr-1" />}
+                          Confirm Rejection
+                        </Button>
+                      )}
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={reviewBusy}
+                        onClick={() => void handleReviewLeave(leaveReviewTarget.leave.id, "approve")}
+                        className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs"
+                      >
+                        {reviewBusy ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+                        Approve Leave
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={reviewBusy}
+                      onClick={() => void handleReviewLeave(leaveReviewTarget.leave.id, "reject", "Revoked by admin")}
+                      className="text-xs text-red-500 hover:text-red-400 border-red-500/30 hover:bg-red-500/10"
+                    >
+                      Revoke Leave
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <div className="space-y-6">
       {calendarModal}
+      {leaveReviewModal}
 
-      <AssignWorkSitesModal
-        worker={assignWorker}
-        open={assignWorker != null}
-        onOpenChange={(open) => {
-          if (!open) setAssignWorker(null);
-        }}
-        onSaved={() => void load()}
-      />
+      {selectedTeacher && mounted && typeof document !== "undefined"
+        ? createPortal(
+            <div className="fixed inset-0 z-[1350] flex items-center justify-center p-4">
+              <div
+                className="absolute inset-0 bg-black/65 backdrop-blur-sm"
+                onClick={() => setSelectedTeacher(null)}
+              />
+              <Card className="relative z-[1] w-full max-w-lg border-zinc-200 shadow-2xl dark:border-white/10 dark:bg-zinc-950">
+                <CardHeader className="flex flex-row items-start justify-between pb-3">
+                  <div>
+                    <CardTitle className="text-lg font-bold flex items-center gap-2">
+                      <GraduationCap className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                      Teacher Profile & Details
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Munshi Habibullah Mission School staff records
+                    </CardDescription>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTeacher(null)}
+                    className="text-zinc-400 hover:text-zinc-100 p-1"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </CardHeader>
+                <CardContent className="space-y-4 text-xs">
+                  <div className="flex items-center gap-3 p-3 rounded-xl bg-zinc-100 dark:bg-white/5 border border-zinc-200 dark:border-white/10">
+                    <div className="flex size-12 items-center justify-center rounded-xl bg-blue-600 text-white font-bold text-base shrink-0">
+                      {selectedTeacher.name ? selectedTeacher.name.charAt(0).toUpperCase() : "T"}
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-sm text-zinc-900 dark:text-zinc-50 truncate">
+                        {selectedTeacher.name}
+                      </h3>
+                      <p className="text-zinc-500 truncate">{selectedTeacher.email}</p>
+                      {selectedTeacher.phone && (
+                        <p className="text-zinc-400 font-mono text-[11px] mt-0.5">
+                          Phone: {selectedTeacher.phone}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-3 rounded-xl border border-zinc-200 dark:border-white/5 bg-zinc-50 dark:bg-white/[0.02]">
+                      <span className="text-zinc-400 font-medium">School Wing / Branch</span>
+                      <p className="font-semibold text-zinc-800 dark:text-zinc-200 text-xs mt-0.5 uppercase">
+                        {selectedTeacher.schoolWingId
+                          ? selectedTeacher.schoolWingId.replace(/_/g, " ")
+                          : "Not Assigned"}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-zinc-200 dark:border-white/5 bg-zinc-50 dark:bg-white/[0.02]">
+                      <span className="text-zinc-400 font-medium">Role & Position</span>
+                      <p className="font-semibold text-zinc-800 dark:text-zinc-200 text-xs mt-0.5">
+                        {selectedTeacher.designation ||
+                          selectedTeacher.position ||
+                          selectedTeacher.role}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl border border-zinc-200 dark:border-white/5 bg-zinc-50 dark:bg-white/[0.02]">
+                    <span className="text-zinc-400 font-medium">Class Teacher Responsibility</span>
+                    <p className="font-semibold text-zinc-800 dark:text-zinc-200 text-xs mt-0.5">
+                      {selectedTeacher.isClassTeacher && selectedTeacher.schoolClassId
+                        ? `${selectedTeacher.schoolClassId} (${selectedTeacher.schoolSectionId ?? "Section A"})`
+                        : "No class assigned"}
+                    </p>
+                  </div>
+
+                  {selectedTeacher.onLeaveToday && (
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400">
+                      <span className="flex items-center gap-1.5 font-semibold text-xs">
+                        <FileCheck className="size-4 shrink-0" /> On Approved {selectedTeacher.todayLeaveType ? selectedTeacher.todayLeaveType.toUpperCase() : ""} Leave Today
+                      </span>
+                      {selectedTeacher.activeLeave ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          type="button"
+                          onClick={() => {
+                            const l = selectedTeacher.activeLeave!;
+                            const t = selectedTeacher;
+                            setSelectedTeacher(null);
+                            setLeaveReviewTarget({
+                              teacher: t,
+                              leave: l,
+                              isPending: false,
+                            });
+                          }}
+                          className="h-7 text-xs border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10"
+                        >
+                          View Details
+                        </Button>
+                      ) : (
+                        <Button asChild size="sm" variant="outline" className="h-7 text-xs border-blue-500/30">
+                          <Link href="/dashboard/admin/leaves">View Leave Queue</Link>
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {selectedTeacher.hasPendingLeave && (
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500">
+                      <span className="flex items-center gap-1.5 font-semibold text-xs">
+                        <Bell className="size-4 shrink-0 fill-amber-500/20" /> Pending leave application
+                      </span>
+                      {selectedTeacher.pendingLeave ? (
+                        <Button
+                          size="sm"
+                          type="button"
+                          onClick={() => {
+                            const pl = selectedTeacher.pendingLeave!;
+                            const t = selectedTeacher;
+                            setSelectedTeacher(null);
+                            setLeaveReviewTarget({
+                              teacher: t,
+                              leave: pl,
+                              isPending: true,
+                            });
+                          }}
+                          className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold"
+                        >
+                          Review &amp; Approve
+                        </Button>
+                      ) : (
+                        <Button asChild size="sm" variant="outline" className="h-7 text-xs border-amber-500/30">
+                          <Link href="/dashboard/admin/leaves">Review Leaves</Link>
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="pt-2 flex flex-wrap justify-end gap-2">
+                    {selectedTeacher.workspaceAccessStatus === "pending" && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+                        onClick={() => {
+                          const id = selectedTeacher.id;
+                          setSelectedTeacher(null);
+                          void approveAccess(id);
+                        }}
+                      >
+                        Approve Workspace Access
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="text-xs"
+                      onClick={() => {
+                        const id = selectedTeacher.id;
+                        setSelectedTeacher(null);
+                        openCalendarFor(id);
+                      }}
+                    >
+                      Attendance Calendar
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>,
+            document.body
+          )
+        : null}
+
       {deleteTarget && mounted && typeof document !== "undefined"
         ? createPortal(
             <div className="fixed inset-0 z-[1360] flex items-center justify-center p-4">
@@ -559,10 +1077,9 @@ export function AdminUsersPanel() {
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <CardTitle>Users</CardTitle>
+            <CardTitle>Teachers & Staff</CardTitle>
             <CardDescription>
-              All accounts from Firestore (no passwords — Firebase never exposes them). Generate a
-              password reset link if someone forgot their password.
+              All registered teacher and staff accounts from Firestore. Click any teacher row to view their complete profile and assigned details.
             </CardDescription>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -573,7 +1090,7 @@ export function AdminUsersPanel() {
               disabled={archiveBusy}
               onClick={() => void downloadWorkersArchive()}
             >
-              {archiveBusy ? "Preparing archive..." : "Download workers archive"}
+              {archiveBusy ? "Preparing archive..." : "Download teachers archive"}
             </Button>
             <Button
               type="button"
@@ -596,6 +1113,56 @@ export function AdminUsersPanel() {
             <p className="text-sm text-red-400">{err}</p>
           ) : (
             <>
+              {/* Notification banner for pending leave requests */}
+              {users.some((u) => u.hasPendingLeave && u.pendingLeave) && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200">
+                  <div className="flex items-center gap-3 text-xs font-medium">
+                    <div className="relative shrink-0">
+                      <div className="p-2 rounded-xl bg-amber-600 text-white shadow-xs">
+                        <Bell className="size-4 animate-bounce" />
+                      </div>
+                      <span className="absolute -top-1 -right-1 size-2.5 rounded-full bg-red-500 animate-ping" />
+                      <span className="absolute -top-1 -right-1 size-2.5 rounded-full bg-red-500" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-sm">
+                        {users.filter((u) => u.hasPendingLeave && u.pendingLeave).length}{" "}
+                        {users.filter((u) => u.hasPendingLeave && u.pendingLeave).length === 1
+                          ? "Leave Application"
+                          : "Leave Applications"}{" "}
+                        Awaiting Your Review
+                      </span>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+                        Staff members have submitted leave requests. Click below or tap the &quot;Leave Request&quot; button in the table to review and approve/reject.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {users
+                      .filter((u) => u.hasPendingLeave && u.pendingLeave)
+                      .slice(0, 3)
+                      .map((t) => (
+                        <Button
+                          key={t.id}
+                          size="sm"
+                          type="button"
+                          onClick={() => {
+                            setLeaveReviewTarget({
+                              teacher: t,
+                              leave: t.pendingLeave!,
+                              isPending: true,
+                            });
+                          }}
+                          className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-xs"
+                        >
+                          <Bell className="size-3.5" />
+                          Review {t.name?.split(" ")[0] || "Staff"}
+                        </Button>
+                      ))}
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="relative max-w-md flex-1">
                   <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
@@ -605,7 +1172,7 @@ export function AdminUsersPanel() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="h-10 pl-9 dark:bg-zinc-950"
-                    aria-label="Search workers"
+                    aria-label="Search teachers and staff"
                   />
                 </div>
                 {canDeleteUsers && selectedEmployeeIds.length > 0 ? (
@@ -662,11 +1229,11 @@ export function AdminUsersPanel() {
                       </th>
                     ) : null}
                     <th className="px-3 py-2">Name</th>
-                    <th className="px-3 py-2">Email</th>
-                    <th className="px-3 py-2">Role</th>
+                    <th className="px-3 py-2">Contact</th>
+                    <th className="px-3 py-2">Branch & Role</th>
                     {canManageAdmins ? <th className="px-3 py-2">Admin</th> : null}
-                    <th className="px-3 py-2 text-right">Assign</th>
-                    <th className="px-3 py-2">View</th>
+                    <th className="px-3 py-2">Status & Leave</th>
+                    <th className="px-3 py-2 text-right">Details</th>
                     {canDeleteUsers ? <th className="px-3 py-2 text-right">Delete</th> : null}
                   </tr>
                 </thead>
@@ -675,7 +1242,7 @@ export function AdminUsersPanel() {
                     <tr
                       key={r.id}
                       className="cursor-pointer border-b border-white/5 hover:bg-white/[0.02]"
-                      onClick={() => openCalendarFor(r.id)}
+                      onClick={() => setSelectedTeacher(r)}
                     >
                       {canDeleteUsers ? (
                         <td
@@ -686,7 +1253,7 @@ export function AdminUsersPanel() {
                           {r.role === "employee" && r.id !== viewerId ? (
                             <input
                               type="checkbox"
-                              className="size-4 rounded border-zinc-600 accent-cyan-600"
+                              className="size-4 rounded border-zinc-600 accent-blue-600"
                               checked={selectedEmployeeIds.includes(r.id)}
                               onChange={() => toggleSelectEmployee(r.id)}
                               aria-label={`Select ${r.name || r.email}`}
@@ -696,9 +1263,28 @@ export function AdminUsersPanel() {
                           )}
                         </td>
                       ) : null}
-                      <td className="px-3 py-2 font-medium">{r.name}</td>
-                      <td className="px-3 py-2 text-zinc-400">{r.email}</td>
-                      <td className="px-3 py-2 capitalize">{r.role}</td>
+                      <td className="px-3 py-2 font-medium">
+                        <div>{r.name}</div>
+                        {r.isClassTeacher && r.schoolClassId && (
+                          <div className="text-[11px] text-blue-500 font-normal">
+                            Class Incharge: {r.schoolClassId}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-zinc-400">
+                        <div>{r.email}</div>
+                        {r.phone && <div className="text-[11px] text-zinc-500 font-mono">{r.phone}</div>}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        <div className="font-semibold text-zinc-200">
+                          {r.designation || r.position || r.role}
+                        </div>
+                        {r.schoolWingId && (
+                          <div className="text-[10px] text-zinc-500 uppercase tracking-wider">
+                            {r.schoolWingId.replace(/_/g, " ")}
+                          </div>
+                        )}
+                      </td>
                       {canManageAdmins ? (
                         <td className="px-3 py-2">
                           {r.role === "admin" ? (
@@ -706,49 +1292,93 @@ export function AdminUsersPanel() {
                               type="button"
                               variant="ghost"
                               size="sm"
-                              className="h-8 text-amber-400 hover:text-amber-300"
+                              className="h-8 text-amber-400 hover:text-amber-300 cursor-pointer"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                void demoteAdmin(r.email, r.name);
+                                setDemoteTarget({ email: r.email, name: r.name });
                               }}
                             >
                               Remove admin
                             </Button>
+                          ) : r.role === "super_admin" ? (
+                            <span className="text-xs font-medium text-blue-400">
+                              Super admin
+                            </span>
                           ) : (
                             <span className="text-zinc-600">—</span>
                           )}
                         </td>
                       ) : null}
-                      <td className="px-3 py-2 text-right">
-                        {r.role === "employee" ? (
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        {r.hasPendingLeave && r.pendingLeave ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLeaveReviewTarget({
+                                teacher: r,
+                                leave: r.pendingLeave!,
+                                isPending: true,
+                              });
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-xs font-bold hover:bg-amber-500/25 transition-all shadow-xs group cursor-pointer animate-pulse"
+                            title="Click to review leave application and approve or reject"
+                          >
+                            <Bell className="size-3.5 fill-amber-500 text-amber-500 group-hover:rotate-12 transition-transform" />
+                            <span>Leave Request</span>
+                            <span className="size-1.5 rounded-full bg-amber-500" />
+                          </button>
+                        ) : r.onLeaveToday ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (r.activeLeave) {
+                                setLeaveReviewTarget({
+                                  teacher: r,
+                                  leave: r.activeLeave,
+                                  isPending: false,
+                                });
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30 text-xs font-bold hover:bg-blue-500/25 transition-all shadow-xs cursor-pointer"
+                            title="Currently On Leave — Click to view details or revoke"
+                          >
+                            <FileCheck className="size-3.5 text-blue-600 dark:text-blue-400" />
+                            <span>On Leave</span>
+                            {r.todayLeaveType && (
+                              <span className="text-[10px] uppercase font-semibold text-blue-600/90 dark:text-blue-300/90 bg-blue-500/10 px-1.5 py-0.2 rounded">
+                                {r.todayLeaveType}
+                              </span>
+                            )}
+                          </button>
+                        ) : r.workspaceAccessStatus === "pending" ? (
                           <Button
                             type="button"
-                            variant="secondary"
                             size="sm"
-                            className="h-8 text-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setAssignWorker(r);
+                            className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+                            onClick={() => {
+                              void approveAccess(r.id);
                             }}
                           >
-                            Assign
+                            Approve Access
                           </Button>
                         ) : (
-                          <span className="text-zinc-600">—</span>
+                          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+                            <CheckCircle2 className="size-3" /> Active
+                          </span>
                         )}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 text-right">
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          className="h-8 text-cyan-400"
+                          className="h-8 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openCalendarFor(r.id);
+                            setSelectedTeacher(r);
                           }}
                         >
-                          View
+                          View Details
                         </Button>
                       </td>
                       {canDeleteUsers ? (
@@ -776,6 +1406,7 @@ export function AdminUsersPanel() {
                     </tr>
                   ))}
                 </tbody>
+
               </table>
               {totalPages > 1 ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 bg-white/[0.02] px-3 py-2.5 text-sm">
@@ -853,6 +1484,26 @@ export function AdminUsersPanel() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Demote Admin Warning Modal */}
+      <DangerConfirmModal
+        open={Boolean(demoteTarget)}
+        onClose={() => setDemoteTarget(null)}
+        onConfirm={confirmDemoteAdmin}
+        title="Danger zone"
+        subtitle="Remove admin privileges"
+        description={
+          <span>
+            Remove administrative privileges for{" "}
+            <strong className="text-white font-semibold">{demoteTarget?.name}</strong>{" "}
+            ({demoteTarget?.email})? They will immediately be reverted to standard employee access.
+          </span>
+        }
+        confirmText="Remove Admin Role"
+        cancelText="Cancel"
+        loading={demoting}
+        variant="warning"
+      />
     </div>
   );
 }

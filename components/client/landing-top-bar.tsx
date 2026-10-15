@@ -8,7 +8,7 @@ import { UserAccountDropdown } from "@/components/client/user-account-dropdown";
 import { Button } from "@/components/ui/button";
 
 /** Same pattern as the dashboard top bar: theme, notifications (when signed in), account menu. */
-export function LandingTopBar() {
+export function LandingTopBar({ hideAvatar = false }: { hideAvatar?: boolean }) {
   const { user, loading } = useDashboardUser();
 
   return (
@@ -22,7 +22,7 @@ export function LandingTopBar() {
       ) : user ? (
         <>
           <NotificationsDropdown />
-          <UserAccountDropdown user={user} />
+          <UserAccountDropdown user={user} hideAvatar={hideAvatar} />
         </>
       ) : (
         <Button variant="secondary" size="sm" className="shrink-0 font-semibold shadow-sm" asChild>

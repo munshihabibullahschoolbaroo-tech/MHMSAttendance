@@ -15,7 +15,7 @@ export default function AdminOverviewPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
             <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Today’s attendance snapshot and pending check-outs.
+              Today’s teacher attendance snapshot and school campus presence.
             </p>
           </div>
           <AdminCalendarModeToggle />
