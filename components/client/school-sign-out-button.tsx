@@ -51,13 +51,19 @@ export function SchoolSignOutButton() {
       if ("geolocation" in navigator) {
         try {
           const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 });
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 10000,
+              maximumAge: 10000,
+            });
           });
           latitude = pos.coords.latitude;
           longitude = pos.coords.longitude;
         } catch {
-          /* optional on checkout */
+          throw new Error("Campus GPS location is required to sign out. Please allow location access.");
         }
+      } else {
+        throw new Error("Geolocation is not supported by your browser.");
       }
 
       const res = await fetch("/api/school/attendance/check-out", {

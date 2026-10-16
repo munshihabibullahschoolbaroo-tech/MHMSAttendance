@@ -367,6 +367,7 @@ export function TeacherAttendanceHome() {
         cutoffFormatted: check.cutoffFormatted,
         minutesLate: check.minutesLate,
       });
+      setActiveSheet(null);
       setLateWarningModalOpen(true);
       return;
     }
@@ -374,8 +375,12 @@ export function TeacherAttendanceHome() {
     void executePunchIn();
   };
 
-  // Punch Out Handler
+  // Punch Out Handler (Requires campus GPS geofence validation)
   const handlePunchOut = async () => {
+    if (!gpsCoords) {
+      toast.error("Waiting for GPS location fix. You must be inside school campus to punch out.");
+      return;
+    }
     setPunching(true);
     try {
       const auth = getFirebaseAuth();
@@ -390,15 +395,15 @@ export function TeacherAttendanceHome() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          latitude: gpsCoords?.lat,
-          longitude: gpsCoords?.lng,
+          latitude: gpsCoords.lat,
+          longitude: gpsCoords.lng,
         }),
       });
 
       const resJson = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(resJson.error ?? "Check-out failed");
 
-      toast.success("Punched out from school successfully!");
+      toast.success(resJson.message ?? "Punched out from school successfully!");
       setPunchOutConfirmOpen(false);
       await refreshStatus();
       setActiveSheet(null);
@@ -1395,6 +1400,16 @@ export function TeacherAttendanceHome() {
                             </div>
                           ) : (
                             <div className="space-y-3">
+                              {/* Amber notice if past late cutoff */}
+                              {isPastLateCutoff(new Date(), data?.config?.teacherLateTime || "09:00 AM").isLate && (
+                                <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+                                  <AlertTriangle className="size-4 shrink-0 text-amber-500" />
+                                  <span>
+                                    Past morning cutoff ({data?.config?.teacherLateTime || "09:00 AM"}). Punching in will be recorded as late arrival.
+                                  </span>
+                                </div>
+                              )}
+
                               <Button
                                 type="button"
                                 size="lg"
@@ -1499,17 +1514,25 @@ export function TeacherAttendanceHome() {
                               </Button>
                             )}
 
-                            <Button
-                              type="button"
-                              size="lg"
-                              variant="outline"
-                              disabled={punching}
-                              onClick={() => setPunchOutConfirmOpen(true)}
-                              className="h-12 w-full gap-2.5 border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:border-red-500/40 dark:text-red-400 font-semibold text-sm shadow-sm cursor-pointer"
-                            >
-                              {punching ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-                              <span>Sign Out / Punch Out from School</span>
-                            </Button>
+                            <div className="space-y-2">
+                              <Button
+                                type="button"
+                                size="lg"
+                                variant="outline"
+                                disabled={punching}
+                                onClick={() => {
+                                  setActiveSheet(null);
+                                  setPunchOutConfirmOpen(true);
+                                }}
+                                className="h-12 w-full gap-2.5 border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:border-red-500/40 dark:text-red-400 font-semibold text-sm shadow-sm cursor-pointer"
+                              >
+                                {punching ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+                                <span>Sign Out / Punch Out from School</span>
+                              </Button>
+                              <p className="text-center text-[11px] text-zinc-500">
+                                Validates your live GPS location inside {config?.radiusMeters}m of campus to sign out.
+                              </p>
+                            </div>
                           </div>
                         )}
 
@@ -1590,7 +1613,7 @@ export function TeacherAttendanceHome() {
         createPortal(
           <AnimatePresence>
             {lateWarningModalOpen && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 z-[100100] flex items-center justify-center p-4">
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -1770,7 +1793,7 @@ export function TeacherAttendanceHome() {
         onConfirm={handlePunchOut}
         title="School Punch Out"
         subtitle="End school working day"
-        description="Are you sure you want to punch out / sign out from MHMS for today? Your checkout timestamp and today's total working hours will be logged."
+        description={`Are you sure you want to punch out / sign out from ${config?.name || "MHMS"} for today? Your live GPS coordinates will be verified to ensure you are within the school campus premises (${config?.radiusMeters || 250}m boundary).`}
         confirmText="Confirm Punch Out"
         cancelText="Cancel"
         loading={punching}
