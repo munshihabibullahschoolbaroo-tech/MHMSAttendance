@@ -102,7 +102,7 @@ function getRowStatus(
       bg: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400 border-zinc-500/20",
     };
   }
-  if (isFuture || rem.includes("unmarked")) {
+  if (isFuture || rem.includes("unmarked") || rem.includes("before")) {
     return {
       label: "Unmarked",
       bg: "bg-zinc-500/10 text-zinc-400 dark:text-zinc-500 border-zinc-500/20",

@@ -9,6 +9,7 @@ import { DateField } from "@/components/ui/date-field";
 import { getBrowserTimeZone } from "@/lib/date/time-zone";
 import { Button } from "@/components/ui/button";
 import { Input, formFieldLabelClass } from "@/components/ui/input";
+import { AppTimePicker } from "@/components/ui/app-time-picker";
 import { Clock, Send, Loader2, Building, AlertCircle } from "lucide-react";
 
 type Assignee = { id: string; name: string; email: string; role: string };
@@ -38,12 +39,12 @@ export function EmployeeManualPunchPanel() {
         const token = await u.getIdToken();
         const hdrs = { Authorization: `Bearer ${token}` };
 
-        const resT = await fetch("/api/school/teachers", { headers: hdrs });
-        const dataT = (await resT.json()) as { teachers?: { id: string; name: string; email: string; role?: string }[] };
+        const resA = await fetch("/api/school/admins", { headers: hdrs });
+        const dataA = (await resA.json()) as { admins?: { id: string; name: string; email: string; role?: string }[] };
 
         if (active) {
-          const loadedTeachers = dataT.teachers ?? [];
-          const adminAssignees: Assignee[] = loadedTeachers.map((t) => ({
+          const loadedAdmins = dataA.admins ?? [];
+          const adminAssignees: Assignee[] = loadedAdmins.map((t) => ({
             id: t.id,
             name: t.name,
             email: t.email,
@@ -160,11 +161,18 @@ export function EmployeeManualPunchPanel() {
                 <SearchableSelect
                   value={assigneeId}
                   onValueChange={setAssigneeId}
-                  options={assignees.map((a) => ({
-                    value: a.id,
-                    label: a.name || a.email,
-                    keywords: [a.name, a.email, a.role],
-                  }))}
+                  options={assignees.map((a) => {
+                    const isSuper = a.role === "super_admin";
+                    const roleBadge = isSuper ? "👑 Super Admin" : "🛡️ School Admin";
+                    const label = a.name
+                      ? `${a.name} (${a.email}) — ${roleBadge}`
+                      : `${a.email} — ${roleBadge}`;
+                    return {
+                      value: a.id,
+                      label,
+                      keywords: [a.name, a.email, a.role, isSuper ? "super" : "admin"],
+                    };
+                  })}
                   emptyLabel="Select admin..."
                 />
               </div>
@@ -173,27 +181,19 @@ export function EmployeeManualPunchPanel() {
             {/* In Time and Out Time */}
             <div className="grid gap-4 sm:grid-cols-2 rounded-2xl border border-zinc-200/80 bg-zinc-50/70 p-4 dark:border-white/5 dark:bg-white/[0.02]">
               <div>
-                <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  School Arrival Time (Punch In)
-                </label>
-                <input
-                  type="time"
-                  required
+                <AppTimePicker
+                  id="manual-punch-in-time"
+                  label="School Arrival Time (Punch In)"
                   value={inTime}
-                  onChange={(e) => setInTime(e.target.value)}
-                  className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3.5 text-sm font-semibold text-zinc-900 focus:border-blue-500 focus:outline-none dark:border-white/15 dark:bg-zinc-900 dark:text-white"
+                  onChange={setInTime}
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  School Departure Time (Punch Out)
-                </label>
-                <input
-                  type="time"
-                  required
+                <AppTimePicker
+                  id="manual-punch-out-time"
+                  label="School Departure Time (Punch Out)"
                   value={outTime}
-                  onChange={(e) => setOutTime(e.target.value)}
-                  className="h-11 w-full rounded-xl border border-zinc-300 bg-white px-3.5 text-sm font-semibold text-zinc-900 focus:border-blue-500 focus:outline-none dark:border-white/15 dark:bg-zinc-900 dark:text-white"
+                  onChange={setOutTime}
                 />
               </div>
               <p className="sm:col-span-2 text-[11px] text-zinc-500 flex items-center gap-1.5 pt-1">

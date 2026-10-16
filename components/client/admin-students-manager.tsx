@@ -769,7 +769,7 @@ export function AdminStudentsManager() {
             <button
               type="button"
               onClick={() => setAddModalOpen(false)}
-              className="absolute top-4 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+              className="absolute top-4 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
               title="Close"
             >
               <X className="size-4" />

@@ -72,6 +72,25 @@ export async function POST(req: Request) {
       }
     }
 
+    // Check if requested class and section is already assigned to another teacher
+    if (isClassTeacher && schoolClassId && schoolSectionId) {
+      const allUsersSnap = await db.collection("users").get();
+      const existingTeacher = allUsersSnap.docs.find((doc) => {
+        if (doc.id === auth.decoded.uid) return false;
+        return (
+          doc.get("isClassTeacher") === true &&
+          doc.get("schoolClassId") === schoolClassId &&
+          doc.get("schoolSectionId") === schoolSectionId
+        );
+      });
+      if (existingTeacher) {
+        return jsonError(
+          `${schoolClassId} (${schoolSectionId}) is already assigned to another teacher. Please select an available class or request an assignment switch.`,
+          400
+        );
+      }
+    }
+
     let employeeId = userSnap.get("employeeId");
     if (role === "employee" && (typeof employeeId !== "string" || !employeeId.trim())) {
       employeeId = await claimEmployeeId(db);

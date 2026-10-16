@@ -1,12 +1,11 @@
 "use client";
 
-import { collection, getDocs, query, where } from "firebase/firestore";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { DateTime } from "luxon";
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { getFirebaseAuth, getFirebaseDb } from "@/lib/firebase/client";
+import { getFirebaseAuth } from "@/lib/firebase/client";
 import {
   Card,
   CardContent,
@@ -26,9 +25,12 @@ type DayMeta = {
   key: string;
   day: number;
   present: boolean;
+  isLate: boolean;
+  onTime: boolean;
   missed: boolean;
   onLeave: boolean;
   isToday: boolean;
+  isBeforeJoin: boolean;
 };
 
 function pad(n: number) {
@@ -43,9 +45,11 @@ function buildMonthGrid(
   viewIso: string,
   mode: CalendarMode,
   attended: Set<string>,
+  lateDates: Set<string>,
   onLeaveDates: Set<string>,
   todayKey: string,
-  zone: string
+  zone: string,
+  firstActiveDate?: string | null
 ) {
   const cells: (DayMeta | null)[] = [];
   if (mode === "ad") {
@@ -56,16 +60,22 @@ function buildMonthGrid(
     for (let i = 0; i < firstDow; i++) cells.push(null);
     for (let d = 1; d <= daysInMonth; d++) {
       const key = dayKey(viewDt.year, viewDt.month - 1, d);
+      const isBeforeJoin = Boolean(firstActiveDate && key < firstActiveDate);
       const present = attended.has(key);
+      const isLate = present && lateDates.has(key);
+      const onTime = present && !isLate;
       const onLeave = onLeaveDates.has(key) && !present;
-      const missed = key < todayKey && !present && !onLeave;
+      const missed = !isBeforeJoin && key < todayKey && !present && !onLeave;
       cells.push({
         key,
         day: d,
         present,
+        isLate,
+        onTime,
         missed,
         onLeave,
         isToday: key === todayKey,
+        isBeforeJoin,
       });
     }
   } else {
@@ -78,16 +88,22 @@ function buildMonthGrid(
     for (let i = 0; i < firstDow; i++) cells.push(null);
     for (let d = 1; d <= daysInMonth; d++) {
       const key = bsIsoToAdIso(`${bsY}-${pad(bsM)}-${pad(d)}`);
+      const isBeforeJoin = Boolean(firstActiveDate && key < firstActiveDate);
       const present = attended.has(key);
+      const isLate = present && lateDates.has(key);
+      const onTime = present && !isLate;
       const onLeave = onLeaveDates.has(key) && !present;
-      const missed = key < todayKey && !present && !onLeave;
+      const missed = !isBeforeJoin && key < todayKey && !present && !onLeave;
       cells.push({
         key,
         day: d,
         present,
+        isLate,
+        onTime,
         missed,
         onLeave,
         isToday: key === todayKey,
+        isBeforeJoin,
       });
     }
   }
@@ -109,7 +125,7 @@ export type AttendanceCalendarProps = {
 export function AttendanceCalendar({
   workerId: workerIdProp,
   title = "Attendance",
-  description = "Month view in your work time zone — ✓ checked in; Leave on approved leave; ✕ absent.",
+  description = "Month view in your school time zone — ✓ on-time check in; Late arrival; Leave on approved leave; ✕ absent.",
   adminDayDetailBasePath = "/dashboard/admin/workers",
 }: AttendanceCalendarProps) {
   const router = useRouter();
@@ -134,7 +150,9 @@ export function AttendanceCalendar({
   }, [tz, mode]);
 
   const [attended, setAttended] = React.useState<Set<string>>(new Set());
+  const [lateDates, setLateDates] = React.useState<Set<string>>(new Set());
   const [onLeaveDates, setOnLeaveDates] = React.useState<Set<string>>(new Set());
+  const [firstActiveDate, setFirstActiveDate] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
 
   const todayKey = React.useMemo(
@@ -150,72 +168,50 @@ export function AttendanceCalendar({
       setLoading(true);
       try {
         const nextAttended = new Set<string>();
+        const nextLate = new Set<string>();
         const nextLeaves = new Set<string>();
-        const explicit = workerIdProp?.trim();
-        const viewingOther =
-          !!explicit && explicit.length > 0 && explicit !== u.uid;
 
-        if (viewingOther) {
-          const token = await u.getIdToken();
-          const res = await fetch(
-            `/api/admin/worker-attendance?workerId=${encodeURIComponent(workerId)}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          const data = (await res.json()) as { dates?: string[]; leaveDates?: string[]; error?: string };
-          if (!res.ok) {
-            throw new Error(data.error ?? "Failed to load attendance");
-          }
-          for (const d of data.dates ?? []) {
-            if (typeof d === "string") nextAttended.add(d);
-          }
-          for (const d of data.leaveDates ?? []) {
-            if (typeof d === "string") nextLeaves.add(d);
-          }
-        } else {
-          const db = getFirebaseDb();
-          const [attSnap, leavesSnap] = await Promise.all([
-            getDocs(query(collection(db, "attendance"), where("workerId", "==", workerId))),
-            getDocs(
-              query(
-                collection(db, "leaveRequests"),
-                where("teacherId", "==", workerId),
-                where("status", "==", "approved")
-              )
-            ).catch(() => ({ forEach: () => {} })),
-          ]);
+        const token = await u.getIdToken();
+        const res = await fetch(
+          `/api/admin/worker-attendance?workerId=${encodeURIComponent(workerId)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const data = (await res.json()) as {
+          dates?: string[];
+          onTimeDates?: string[];
+          lateDates?: string[];
+          leaveDates?: string[];
+          firstActiveDate?: string | null;
+          error?: string;
+        };
 
-          attSnap.forEach((docSnap) => {
-            const data = docSnap.data() as { date?: string };
-            if (data.date && typeof data.date === "string") nextAttended.add(data.date);
-          });
-
-          leavesSnap.forEach((docSnap: any) => {
-            const d = docSnap.data();
-            const startStr = String(d.startDate ?? "");
-            const endStr = String(d.endDate ?? startStr);
-            const curr = new Date(startStr + "T00:00:00Z");
-            const end = new Date(endStr + "T00:00:00Z");
-            if (!isNaN(curr.getTime()) && !isNaN(end.getTime()) && curr <= end) {
-              while (curr <= end) {
-                const yyyy = curr.getUTCFullYear();
-                const mm = String(curr.getUTCMonth() + 1).padStart(2, "0");
-                const dd = String(curr.getUTCDate()).padStart(2, "0");
-                nextLeaves.add(`${yyyy}-${mm}-${dd}`);
-                curr.setUTCDate(curr.getUTCDate() + 1);
-              }
-            } else if (startStr) {
-              nextLeaves.add(startStr);
-            }
-          });
+        if (!res.ok) {
+          throw new Error(data.error ?? "Failed to load attendance");
         }
+
+        for (const d of data.dates ?? []) {
+          if (typeof d === "string") nextAttended.add(d);
+        }
+        for (const d of data.lateDates ?? []) {
+          if (typeof d === "string") nextLate.add(d);
+        }
+        for (const d of data.leaveDates ?? []) {
+          if (typeof d === "string") nextLeaves.add(d);
+        }
+
         if (!cancelled) {
           setAttended(nextAttended);
+          setLateDates(nextLate);
           setOnLeaveDates(nextLeaves);
+          setFirstActiveDate(data.firstActiveDate ?? null);
         }
-      } catch {
+      } catch (err) {
+        console.warn("Failed to load worker attendance:", err);
         if (!cancelled) {
           setAttended(new Set());
+          setLateDates(new Set());
           setOnLeaveDates(new Set());
+          setFirstActiveDate(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -225,7 +221,9 @@ export function AttendanceCalendar({
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (!u) {
         setAttended(new Set());
+        setLateDates(new Set());
         setOnLeaveDates(new Set());
+        setFirstActiveDate(null);
         setLoading(false);
         return;
       }
@@ -240,8 +238,8 @@ export function AttendanceCalendar({
   }, [workerIdProp]);
 
   const cells = React.useMemo(
-    () => buildMonthGrid(viewIso, mode, attended, onLeaveDates, todayKey, tz),
-    [viewIso, mode, attended, onLeaveDates, todayKey, tz]
+    () => buildMonthGrid(viewIso, mode, attended, lateDates, onLeaveDates, todayKey, tz, firstActiveDate),
+    [viewIso, mode, attended, lateDates, onLeaveDates, todayKey, tz, firstActiveDate]
   );
 
   const label = React.useMemo(() => {
@@ -256,15 +254,23 @@ export function AttendanceCalendar({
 
   const stats = React.useMemo(() => {
     let p = 0;
+    let ot = 0;
+    let lt = 0;
     let a = 0;
     let l = 0;
     for (const c of cells) {
       if (!c) continue;
-      if (c.present) p++;
-      else if (c.onLeave) l++;
-      else if (c.missed) a++;
+      if (c.present) {
+        p++;
+        if (c.isLate) lt++;
+        else ot++;
+      } else if (c.onLeave) {
+        l++;
+      } else if (c.missed) {
+        a++;
+      }
     }
-    return { present: p, absent: a, leaves: l };
+    return { present: p, onTime: ot, late: lt, absent: a, leaves: l };
   }, [cells]);
 
   const zoneShort = workTimeZoneUiLabel(tz);
@@ -285,7 +291,7 @@ export function AttendanceCalendar({
           <div className="flex items-center justify-between sm:justify-end gap-2">
             <button
               type="button"
-              className="rounded-xl border border-zinc-200/90 p-2 hover:bg-zinc-100 active:scale-95 transition-all dark:border-white/10 dark:hover:bg-white/5"
+              className="rounded-xl border border-zinc-200/90 p-2 hover:bg-zinc-100 active:scale-95 transition-all dark:border-white/10 dark:hover:bg-white/5 cursor-pointer"
               aria-label="Previous month"
               onClick={() => {
                 if (mode === "ad") {
@@ -310,7 +316,7 @@ export function AttendanceCalendar({
             </span>
             <button
               type="button"
-              className="rounded-xl border border-zinc-200/90 p-2 hover:bg-zinc-100 active:scale-95 transition-all dark:border-white/10 dark:hover:bg-white/5"
+              className="rounded-xl border border-zinc-200/90 p-2 hover:bg-zinc-100 active:scale-95 transition-all dark:border-white/10 dark:hover:bg-white/5 cursor-pointer"
               aria-label="Next month"
               onClick={() => {
                 if (mode === "ad") {
@@ -338,7 +344,11 @@ export function AttendanceCalendar({
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
             <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Present: {stats.present}
+            On Time: {stats.onTime}
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+            <span className="flex h-1.5 w-1.5 rounded-full bg-amber-500" />
+            Late: {stats.late}
           </span>
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400">
             <span className="flex h-1.5 w-1.5 rounded-full bg-red-500" />
@@ -377,26 +387,33 @@ export function AttendanceCalendar({
                     key={cell.key}
                     type="button"
                     className={cn(
-                      "flex aspect-square flex-col items-center justify-center rounded-xl border text-xs transition-all active:scale-95 hover:border-zinc-400 dark:hover:border-white/30",
+                      "flex aspect-square flex-col items-center justify-center rounded-xl border text-xs transition-all active:scale-95 hover:border-zinc-400 dark:hover:border-white/30 cursor-pointer",
                       cell.isToday && "ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-zinc-950",
-                      cell.present &&
-                        "border-emerald-500/50 bg-emerald-500/15 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 font-semibold",
-                      cell.onLeave &&
-                        !cell.present &&
-                        "border-blue-500/40 bg-blue-500/15 text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200 font-semibold",
-                      cell.missed &&
-                        !cell.present &&
-                        !cell.onLeave &&
-                        "border-red-500/40 bg-red-500/15 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200 font-semibold",
-                      !cell.present &&
-                        !cell.missed &&
-                        !cell.onLeave &&
+                      cell.present && !cell.isLate &&
+                        "border-emerald-500/50 bg-emerald-500/15 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300 font-semibold shadow-xs",
+                      cell.present && cell.isLate &&
+                        "border-amber-500/50 bg-amber-500/15 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 font-semibold shadow-xs",
+                      cell.onLeave && !cell.present &&
+                        "border-blue-500/40 bg-blue-500/15 text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300 font-semibold shadow-xs",
+                      cell.isBeforeJoin && !cell.present && !cell.onLeave &&
+                        "border-dashed border-zinc-200/60 bg-zinc-50/30 text-zinc-400 dark:border-white/5 dark:bg-transparent dark:text-zinc-600 opacity-50",
+                      cell.missed && !cell.present && !cell.onLeave &&
+                        "border-red-500/40 bg-red-500/15 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 font-semibold",
+                      !cell.isBeforeJoin && !cell.present && !cell.missed && !cell.onLeave &&
                         "border-zinc-200/80 bg-zinc-50/90 text-zinc-600 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-400"
                     )}
                     title={
                       cell.onLeave
                         ? `${cell.key} — On Approved Leave`
-                        : `${cell.key} — open day timeline`
+                        : cell.present && cell.isLate
+                        ? `${cell.key} — Checked In (Late Arrival)`
+                        : cell.present
+                        ? `${cell.key} — Checked In (On Time)`
+                        : cell.isBeforeJoin
+                        ? `${cell.key} — Prior to platform joining date`
+                        : cell.missed
+                        ? `${cell.key} — Absent`
+                        : `${cell.key} — Open day timeline`
                     }
                     onClick={() => {
                       const wid = workerIdProp?.trim();
@@ -411,8 +428,12 @@ export function AttendanceCalendar({
                     <span className="font-bold text-xs sm:text-sm">
                       {mode === "bs" ? dayNumberForMode(cell.key, mode) : cell.day}
                     </span>
-                    {cell.present ? (
+                    {cell.present && !cell.isLate ? (
                       <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400">✓</span>
+                    ) : cell.present && cell.isLate ? (
+                      <span className="text-[9px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-tighter">
+                        Late
+                      </span>
                     ) : cell.onLeave ? (
                       <span className="text-[9px] font-extrabold text-blue-600 dark:text-blue-400 uppercase tracking-tighter">
                         Leave

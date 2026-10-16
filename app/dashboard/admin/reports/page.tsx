@@ -49,9 +49,17 @@ import {
   Coffee,
   Clock,
   TrendingUp,
+  FileText,
+  ExternalLink,
+  Search,
+  FileImage,
+  CheckSquare,
+  Square,
+  RefreshCw,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
 import { cn } from "@/lib/utils";
+import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
 
 type UserRow = {
   id: string;
@@ -195,6 +203,18 @@ export default function AdminReportsPage() {
   const [siteDownloading, setSiteDownloading] = React.useState(false);
 
   // ── Storage cleanup state ────────────────────────────────────────────────
+  type StorageFileItem = {
+    url: string;
+    pathname: string;
+    size: number;
+    sizeFormatted: string;
+    uploadedAtIso: string;
+    viewUrl: string;
+    category: string;
+    userId: string | null;
+    userName: string;
+    fileName: string;
+  };
   const [storageFromMonth, setStorageFromMonth] = React.useState(() =>
     currentMonthYyyyMmForMode("ad", DEFAULT_ATTENDANCE_TIME_ZONE)
   );
@@ -203,6 +223,20 @@ export default function AdminReportsPage() {
   );
   const [storageLoading, setStorageLoading] = React.useState(false);
   const [storageDeleting, setStorageDeleting] = React.useState(false);
+  const [storageFiles, setStorageFiles] = React.useState<StorageFileItem[]>([]);
+  const [storageTotalBytesFormatted, setStorageTotalBytesFormatted] = React.useState("0 B");
+  const [storageFilterMode, setStorageFilterMode] = React.useState<"all" | "range">("all");
+  const [storageSearchQuery, setStorageSearchQuery] = React.useState("");
+  const [storageSelectedUrls, setStorageSelectedUrls] = React.useState<string[]>([]);
+  const [storageDeletingUrl, setStorageDeletingUrl] = React.useState<string | null>(null);
+  const [storageCompressingUrl, setStorageCompressingUrl] = React.useState<string | null>(null);
+  const [storageConfirmModal, setStorageConfirmModal] = React.useState<{
+    title: string;
+    subtitle?: string;
+    description: string;
+    confirmText: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
   const [storagePreview, setStoragePreview] = React.useState<{
     scannedCount: number;
     deleteCandidateCount: number;
@@ -816,86 +850,211 @@ export default function AdminReportsPage() {
   }, [siteData, fetchLogoDataUrl, mode]);
 
   // ── Storage cleanup functions ────────────────────────────────────────────
-  const previewStorageDeletion = React.useCallback(async () => {
-    setStorageLoading(true);
-    try {
-      const auth = getFirebaseAuth();
-      const u = auth.currentUser;
-      if (!u) throw new Error("Not signed in");
-      const token = await u.getIdToken();
-      const q = new URLSearchParams({
-        fromMonth: storageFromMonth,
-        toMonth: storageToMonth,
-      });
-      const res = await fetch(`/api/admin/storage/photos?${q.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        scannedCount?: number;
-        deleteCandidateCount?: number;
-        sample?: { pathname: string; uploadedAtIso: string }[];
-        truncated?: boolean;
-      };
-      if (!res.ok)
-        throw new Error(json.error ?? "Failed to preview storage cleanup");
-      setStoragePreview({
-        scannedCount: json.scannedCount ?? 0,
-        deleteCandidateCount: json.deleteCandidateCount ?? 0,
-        sample: json.sample ?? [],
-        truncated: json.truncated,
-      });
-      toast.success("Storage scan completed");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to preview");
-    } finally {
-      setStorageLoading(false);
-    }
-  }, [storageFromMonth, storageToMonth]);
+  const fetchStorageFiles = React.useCallback(
+    async (showToast = false) => {
+      setStorageLoading(true);
+      try {
+        const auth = getFirebaseAuth();
+        const u = auth.currentUser;
+        if (!u) throw new Error("Not signed in");
+        const token = await u.getIdToken();
+        const params = new URLSearchParams();
+        if (storageFilterMode === "range") {
+          params.set("fromMonth", storageFromMonth);
+          params.set("toMonth", storageToMonth);
+        } else {
+          params.set("all", "1");
+        }
+        const res = await fetch(`/api/admin/storage/photos?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "Failed to fetch storage files");
+        setStorageFiles(json.files ?? []);
+        setStorageTotalBytesFormatted(json.totalBytesFormatted ?? "0 B");
+        setStoragePreview({
+          scannedCount: json.scannedCount ?? 0,
+          deleteCandidateCount: json.deleteCandidateCount ?? 0,
+          sample: json.sample ?? [],
+          truncated: json.truncated,
+        });
+        if (showToast) {
+          toast.success(`Storage scan completed (${json.totalCount ?? 0} files found)`);
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to load storage files");
+      } finally {
+        setStorageLoading(false);
+      }
+    },
+    [storageFilterMode, storageFromMonth, storageToMonth]
+  );
 
-  const executeStorageDeletion = React.useCallback(async () => {
-    if (!storagePreview || storagePreview.deleteCandidateCount === 0) {
-      toast.error("No photos found in selected month range");
+  const compressSingleFile = React.useCallback(
+    async (file: StorageFileItem) => {
+      setStorageCompressingUrl(file.url);
+      try {
+        const auth = getFirebaseAuth();
+        const u = auth.currentUser;
+        if (!u) throw new Error("Not signed in");
+        const token = await u.getIdToken();
+        const res = await fetch("/api/admin/storage/photos", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ url: file.url }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "Failed to compress file");
+        toast.success(json.message ?? "File optimized successfully!");
+        void fetchStorageFiles(false);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Error compressing file");
+      } finally {
+        setStorageCompressingUrl(null);
+      }
+    },
+    [fetchStorageFiles]
+  );
+
+  const deleteSingleFile = React.useCallback(
+    (file: StorageFileItem) => {
+      setStorageConfirmModal({
+        title: "Delete Stored Document",
+        subtitle: file.fileName,
+        description: `Permanently delete "${file.fileName}" (${file.sizeFormatted}) from Vercel Blob storage? This cannot be undone.`,
+        confirmText: "Delete File",
+        onConfirm: async () => {
+          setStorageDeletingUrl(file.url);
+          try {
+            const auth = getFirebaseAuth();
+            const u = auth.currentUser;
+            if (!u) throw new Error("Not signed in");
+            const token = await u.getIdToken();
+            const res = await fetch("/api/admin/storage/photos", {
+              method: "DELETE",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ url: file.url }),
+            });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(json.error ?? "Failed to delete file");
+            toast.success(`Deleted "${file.fileName}" from Blob storage`);
+            setStorageFiles((prev) => prev.filter((f) => f.url !== file.url));
+            setStorageSelectedUrls((prev) => prev.filter((u) => u !== file.url));
+            void fetchStorageFiles(false);
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Failed to delete file");
+          } finally {
+            setStorageDeletingUrl(null);
+            setStorageConfirmModal(null);
+          }
+        },
+      });
+    },
+    [fetchStorageFiles]
+  );
+
+  const deleteSelectedFiles = React.useCallback(() => {
+    if (storageSelectedUrls.length === 0) return;
+    setStorageConfirmModal({
+      title: "Delete Selected Documents",
+      subtitle: `${storageSelectedUrls.length} file(s) selected`,
+      description: `Permanently delete ${storageSelectedUrls.length} selected document(s) from Vercel Blob storage? This will permanently free up storage space.`,
+      confirmText: "Delete Selected",
+      onConfirm: async () => {
+        setStorageDeleting(true);
+        try {
+          const auth = getFirebaseAuth();
+          const u = auth.currentUser;
+          if (!u) throw new Error("Not signed in");
+          const token = await u.getIdToken();
+          const res = await fetch("/api/admin/storage/photos", {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ urls: storageSelectedUrls }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(json.error ?? "Failed to delete files");
+          toast.success(
+            `Successfully deleted ${json.deletedCount ?? storageSelectedUrls.length} file(s) from Blob storage`
+          );
+          setStorageSelectedUrls([]);
+          void fetchStorageFiles(false);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Failed to delete selected files");
+        } finally {
+          setStorageDeleting(false);
+          setStorageConfirmModal(null);
+        }
+      },
+    });
+  }, [storageSelectedUrls, fetchStorageFiles]);
+
+  const executeStorageDeletion = React.useCallback(() => {
+    if (storageFiles.length === 0) {
+      toast.error("No documents found in storage to delete.");
       return;
     }
-    const ok = window.confirm(
-      `Permanently delete ${storagePreview.deleteCandidateCount} attendance photo(s)? This cannot be undone.`
-    );
-    if (!ok) return;
+    const label =
+      storageFilterMode === "range"
+        ? `all documents between ${storageFromMonth} and ${storageToMonth}`
+        : "ALL stored medical reports and certificates";
 
-    setStorageDeleting(true);
-    try {
-      const auth = getFirebaseAuth();
-      const u = auth.currentUser;
-      if (!u) throw new Error("Not signed in");
-      const token = await u.getIdToken();
-      const res = await fetch("/api/admin/storage/photos", {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          fromMonth: storageFromMonth,
-          toMonth: storageToMonth,
-          confirmed: true,
-        }),
-      });
-      const json = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        deletedCount?: number;
-      };
-      if (!res.ok) throw new Error(json.error ?? "Failed to delete photos");
-      toast.success(
-        `Successfully pruned ${json.deletedCount ?? 0} photos from storage`
-      );
-      setStoragePreview(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to delete photos");
-    } finally {
-      setStorageDeleting(false);
+    setStorageConfirmModal({
+      title: "Prune Stored Documents",
+      subtitle: label,
+      description: `Permanently delete ${label} (${storageFiles.length} file(s)) from Vercel Blob storage? This will clear all stored files and cannot be undone.`,
+      confirmText: "Prune Storage",
+      onConfirm: async () => {
+        setStorageDeleting(true);
+        try {
+          const auth = getFirebaseAuth();
+          const u = auth.currentUser;
+          if (!u) throw new Error("Not signed in");
+          const token = await u.getIdToken();
+          const res = await fetch("/api/admin/storage/photos", {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(
+              storageFilterMode === "range"
+                ? { fromMonth: storageFromMonth, toMonth: storageToMonth, confirmed: true }
+                : { all: true, confirmed: true }
+            ),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(json.error ?? "Failed to delete from storage");
+          toast.success(
+            `Successfully pruned ${json.deletedCount ?? 0} file(s) from Blob storage`
+          );
+          setStorageSelectedUrls([]);
+          void fetchStorageFiles(false);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Failed to delete files");
+        } finally {
+          setStorageDeleting(false);
+          setStorageConfirmModal(null);
+        }
+      },
+    });
+  }, [storageFiles.length, storageFilterMode, storageFromMonth, storageToMonth, fetchStorageFiles]);
+
+  // Load storage files when tab is opened
+  React.useEffect(() => {
+    if (activeTab === "storage") {
+      void fetchStorageFiles(false);
     }
-  }, [storagePreview, storageFromMonth, storageToMonth]);
+  }, [activeTab, storageFilterMode, storageFromMonth, storageToMonth, fetchStorageFiles]);
 
   return (
     <div className="relative min-h-[calc(100vh-4rem)] p-4 sm:p-6 md:p-8">
@@ -1759,102 +1918,377 @@ export default function AdminReportsPage() {
 
         {activeTab === "storage" && (
           <div className="space-y-6 animate-in fade-in duration-300">
-            <Card className="border-zinc-200 bg-white/80 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-zinc-900/80">
-              <CardHeader className="bg-zinc-50/50 dark:bg-white/5 border-b border-zinc-100 dark:border-white/10">
-                <CardTitle className="text-sm font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
-                  <HardDrive className="size-4" /> Attendance Photo Storage
-                  Cleanup
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-6">
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  Select month range to scan and prune uploaded attendance selfie photos from Blob storage.
-                </p>
-                <div className="grid gap-4 md:grid-cols-2">
+            {/* Storage Header & Info */}
+            <Card className="border-zinc-200 bg-white/80 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-zinc-900/80 overflow-hidden">
+              <CardHeader className="bg-zinc-50/50 dark:bg-white/5 border-b border-zinc-100 dark:border-white/10 pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                   <div>
-                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">
-                      From month
-                    </label>
-                    <SearchableSelect
-                      value={storageFromMonth}
-                      onValueChange={setStorageFromMonth}
-                      includeEmpty={false}
-                      options={monthOptions}
-                      searchPlaceholder="Select start month..."
-                      triggerClassName="h-11 w-full rounded-xl border-zinc-200 bg-white/50 backdrop-blur-md px-4 text-sm font-medium shadow-sm dark:border-white/10 dark:bg-zinc-900/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-zinc-500">
-                      To month
-                    </label>
-                    <SearchableSelect
-                      value={storageToMonth}
-                      onValueChange={setStorageToMonth}
-                      includeEmpty={false}
-                      options={monthOptions}
-                      searchPlaceholder="Select end month..."
-                      triggerClassName="h-11 w-full rounded-xl border-zinc-200 bg-white/50 backdrop-blur-md px-4 text-sm font-medium shadow-sm dark:border-white/10 dark:bg-zinc-900/50"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void previewStorageDeletion()}
-                    disabled={storageLoading || storageDeleting}
-                    className="gap-2 rounded-xl"
-                  >
-                    {storageLoading ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <HardDrive className="size-4" />
-                    )}
-                    Scan Candidate Photos
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={() => void executeStorageDeletion()}
-                    disabled={
-                      storageLoading ||
-                      storageDeleting ||
-                      !storagePreview ||
-                      storagePreview.deleteCandidateCount === 0
-                    }
-                    className="gap-2 rounded-xl font-bold"
-                  >
-                    {storageDeleting ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="size-4" />
-                    )}
-                    Prune Photos Permanently
-                  </Button>
-                </div>
-
-                {storagePreview && (
-                  <div className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03] space-y-3">
-                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                      Scan Summary: {storagePreview.deleteCandidateCount} photo(s)
-                      found in selected range
+                    <CardTitle className="text-base font-bold text-zinc-900 dark:text-zinc-50 flex items-center gap-2">
+                      <HardDrive className="size-5 text-cyan-600 dark:text-cyan-400" />
+                      Leave Medical Documents & Certificate Storage
+                    </CardTitle>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 max-w-2xl">
+                      Cloud storage in Vercel Blob is strictly used for staff medical certificates, prescriptions, and leave proof documents. You can inspect all files, view attachments, and permanently delete files at any time to free up storage.
                     </p>
-                    {storagePreview.sample.length > 0 && (
-                      <div className="space-y-1">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-                          Sample Files:
-                        </p>
-                        <ul className="text-xs font-mono text-zinc-600 dark:text-zinc-400 space-y-1">
-                          {storagePreview.sample.slice(0, 5).map((s) => (
-                            <li key={s.pathname} className="truncate">
-                              • {s.pathname} ({s.uploadedAtIso})
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void fetchStorageFiles(true)}
+                      disabled={storageLoading || storageDeleting}
+                      className="gap-1.5 rounded-xl text-xs font-semibold"
+                    >
+                      <RefreshCw className={cn("size-3.5", storageLoading && "animate-spin")} />
+                      Refresh
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => void executeStorageDeletion()}
+                      disabled={storageLoading || storageDeleting || storageFiles.length === 0}
+                      className="gap-1.5 rounded-xl text-xs font-bold"
+                    >
+                      {storageDeleting ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3.5" />
+                      )}
+                      Prune All in Range
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent className="space-y-6 pt-6">
+                {/* Metrics Bar */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                      Total Documents Stored
+                    </p>
+                    <p className="text-2xl font-black text-zinc-900 dark:text-zinc-100 mt-1">
+                      {storageFiles.length}
+                      <span className="text-xs font-medium text-zinc-500 ml-1.5">files</span>
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                      Cloud Storage Consumed
+                    </p>
+                    <p className="text-2xl font-black text-cyan-600 dark:text-cyan-400 mt-1">
+                      {storageTotalBytesFormatted}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                      Storage Backend
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <p className="text-sm font-bold text-zinc-800 dark:text-zinc-200">
+                        Vercel Blob (Private Store)
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filter and Search Controls */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1 border-t border-zinc-100 dark:border-white/5">
+                  {/* Mode Selector */}
+                  <div className="flex items-center gap-1 rounded-xl bg-zinc-100 p-1 dark:bg-white/5 self-start">
+                    <button
+                      type="button"
+                      onClick={() => setStorageFilterMode("all")}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                        storageFilterMode === "all"
+                          ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+                          : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400"
+                      )}
+                    >
+                      All Stored Files
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStorageFilterMode("range")}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                        storageFilterMode === "range"
+                          ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+                          : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400"
+                      )}
+                    >
+                      Filter by Month
+                    </button>
+                  </div>
+
+                  {/* Search Input */}
+                  <div className="relative flex-1 max-w-sm">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={storageSearchQuery}
+                      onChange={(e) => setStorageSearchQuery(e.target.value)}
+                      placeholder="Search document name or staff..."
+                      className="h-9 w-full rounded-xl border border-zinc-200 bg-white/70 pl-9 pr-3 text-xs placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 dark:border-white/10 dark:bg-zinc-900/70 dark:text-zinc-100"
+                    />
+                  </div>
+                </div>
+
+                {/* Month Range Selectors (when range mode active) */}
+                {storageFilterMode === "range" && (
+                  <div className="grid gap-4 md:grid-cols-2 p-3 rounded-2xl bg-zinc-50/50 border border-zinc-100 dark:bg-white/[0.02] dark:border-white/5">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-zinc-500">
+                        From month
+                      </label>
+                      <SearchableSelect
+                        value={storageFromMonth}
+                        onValueChange={setStorageFromMonth}
+                        includeEmpty={false}
+                        options={monthOptions}
+                        searchPlaceholder="Select start month..."
+                        triggerClassName="h-10 w-full rounded-xl border-zinc-200 bg-white/70 px-4 text-xs font-medium shadow-sm dark:border-white/10 dark:bg-zinc-900/70"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-zinc-500">
+                        To month
+                      </label>
+                      <SearchableSelect
+                        value={storageToMonth}
+                        onValueChange={setStorageToMonth}
+                        includeEmpty={false}
+                        options={monthOptions}
+                        searchPlaceholder="Select end month..."
+                        triggerClassName="h-10 w-full rounded-xl border-zinc-200 bg-white/70 px-4 text-xs font-medium shadow-sm dark:border-white/10 dark:bg-zinc-900/70"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Bulk Selection Actions Bar */}
+                {storageSelectedUrls.length > 0 && (
+                  <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-cyan-50/80 border border-cyan-200/60 dark:bg-cyan-950/30 dark:border-cyan-800/40">
+                    <span className="text-xs font-semibold text-cyan-900 dark:text-cyan-200">
+                      {storageSelectedUrls.length} file(s) selected
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setStorageSelectedUrls([])}
+                        className="text-xs h-8 text-zinc-600 dark:text-zinc-300"
+                      >
+                        Clear Selection
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => void deleteSelectedFiles()}
+                        disabled={storageDeleting}
+                        className="text-xs h-8 font-bold gap-1.5"
+                      >
+                        <Trash2 className="size-3.5" />
+                        Delete Selected ({storageSelectedUrls.length})
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Stored Files Table */}
+                {storageLoading ? (
+                  <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 text-zinc-500">
+                    <Loader2 className="size-7 animate-spin text-cyan-600" />
+                    <p className="text-xs font-medium">Scanning Vercel Blob cloud storage...</p>
+                  </div>
+                ) : storageFiles.length === 0 ? (
+                  <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-zinc-200 p-8 text-center dark:border-white/10">
+                    <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="size-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                        No Stored Documents Found
+                      </p>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                        {storageFilterMode === "range"
+                          ? "No medical documents uploaded in this month range. Storage is completely clean!"
+                          : "There are currently 0 medical certificates or documents stored in Vercel Blob."}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-zinc-200/90 overflow-hidden dark:border-white/10 bg-white/50 dark:bg-zinc-900/50">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-zinc-200/80 bg-zinc-50/80 dark:border-white/10 dark:bg-white/[0.02] text-zinc-500 font-bold uppercase tracking-wider text-[11px]">
+                            <th className="py-3 px-4 w-10 text-center">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (storageSelectedUrls.length === storageFiles.length) {
+                                    setStorageSelectedUrls([]);
+                                  } else {
+                                    setStorageSelectedUrls(storageFiles.map((f) => f.url));
+                                  }
+                                }}
+                                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                              >
+                                {storageSelectedUrls.length > 0 &&
+                                storageSelectedUrls.length === storageFiles.length ? (
+                                  <CheckSquare className="size-4 text-cyan-600" />
+                                ) : (
+                                  <Square className="size-4" />
+                                )}
+                              </button>
+                            </th>
+                            <th className="py-3 px-3">Document Name</th>
+                            <th className="py-3 px-3">Staff / Teacher</th>
+                            <th className="py-3 px-3">Upload Date</th>
+                            <th className="py-3 px-3 text-right">Size</th>
+                            <th className="py-3 px-4 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100 dark:divide-white/5 font-medium text-zinc-700 dark:text-zinc-300">
+                          {storageFiles
+                            .filter((f) => {
+                              if (!storageSearchQuery.trim()) return true;
+                              const q = storageSearchQuery.toLowerCase();
+                              return (
+                                f.fileName.toLowerCase().includes(q) ||
+                                f.userName.toLowerCase().includes(q) ||
+                                f.category.toLowerCase().includes(q)
+                              );
+                            })
+                            .map((file) => {
+                              const isSelected = storageSelectedUrls.includes(file.url);
+                              const isDeleting = storageDeletingUrl === file.url;
+                              const isPdf = file.fileName.toLowerCase().endsWith(".pdf");
+
+                              return (
+                                <tr
+                                  key={file.url}
+                                  className={cn(
+                                    "transition-colors hover:bg-zinc-50/80 dark:hover:bg-white/[0.02]",
+                                    isSelected && "bg-cyan-50/40 dark:bg-cyan-950/20"
+                                  )}
+                                >
+                                  <td className="py-3 px-4 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setStorageSelectedUrls((prev) =>
+                                          prev.includes(file.url)
+                                            ? prev.filter((u) => u !== file.url)
+                                            : [...prev, file.url]
+                                        );
+                                      }}
+                                      className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                                    >
+                                      {isSelected ? (
+                                        <CheckSquare className="size-4 text-cyan-600" />
+                                      ) : (
+                                        <Square className="size-4" />
+                                      )}
+                                    </button>
+                                  </td>
+
+                                  <td className="py-3 px-3">
+                                    <div className="flex items-center gap-2 max-w-xs sm:max-w-md">
+                                      <div className="size-7 rounded-lg bg-zinc-100 dark:bg-white/5 flex items-center justify-center shrink-0 text-zinc-500">
+                                        {isPdf ? (
+                                          <FileText className="size-4 text-red-500" />
+                                        ) : (
+                                          <FileImage className="size-4 text-blue-500" />
+                                        )}
+                                      </div>
+                                      <div className="truncate">
+                                        <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                                          {file.fileName}
+                                        </p>
+                                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                                          {file.category.replace(/_/g, " ")}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-3 px-3">
+                                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-white/5 text-zinc-800 dark:text-zinc-200 text-xs font-semibold">
+                                      <User className="size-3 text-zinc-400" />
+                                      {file.userName}
+                                    </span>
+                                  </td>
+
+                                  <td className="py-3 px-3 text-zinc-500 dark:text-zinc-400 text-xs whitespace-nowrap">
+                                    {DateTime.fromISO(file.uploadedAtIso).toFormat("LLL dd, yyyy · hh:mm a")}
+                                  </td>
+
+                                  <td className="py-3 px-3 text-right font-mono text-zinc-600 dark:text-zinc-400 text-xs whitespace-nowrap">
+                                    {file.sizeFormatted}
+                                  </td>
+
+                                  <td className="py-3 px-4 text-right whitespace-nowrap">
+                                    <div className="inline-flex items-center gap-1.5 justify-end">
+                                      {file.size > 200 * 1024 && (
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => void compressSingleFile(file)}
+                                          disabled={storageCompressingUrl === file.url || isDeleting || storageDeleting}
+                                          className="h-7 px-2 text-[11px] gap-1 border-blue-500/30 text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/30 rounded-lg transition-colors font-semibold shadow-2xs"
+                                          title="Optimize & compress document"
+                                        >
+                                          {storageCompressingUrl === file.url ? (
+                                            <Loader2 className="size-3 animate-spin text-blue-600" />
+                                          ) : (
+                                            <Zap className="size-3 text-blue-500" />
+                                          )}
+                                          Compress
+                                        </Button>
+                                      )}
+                                      <a
+                                        href={file.viewUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-white/10 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 font-semibold text-xs shadow-2xs transition-colors"
+                                      >
+                                        View
+                                        <ExternalLink className="size-3 opacity-60" />
+                                      </a>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => void deleteSingleFile(file)}
+                                        disabled={isDeleting || storageDeleting || storageCompressingUrl === file.url}
+                                        className="size-7 text-zinc-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors"
+                                        title="Delete file permanently"
+                                      >
+                                        {isDeleting ? (
+                                          <Loader2 className="size-3.5 animate-spin text-red-600" />
+                                        ) : (
+                                          <Trash2 className="size-3.5" />
+                                        )}
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -1924,6 +2358,22 @@ export default function AdminReportsPage() {
             </div>,
             document.body
           )}
+
+        {/* DangerConfirmModal for Storage Deletions */}
+        <DangerConfirmModal
+          open={Boolean(storageConfirmModal)}
+          onClose={() => setStorageConfirmModal(null)}
+          onConfirm={async () => {
+            if (storageConfirmModal) await storageConfirmModal.onConfirm();
+          }}
+          title={storageConfirmModal?.title ?? "Danger Zone"}
+          subtitle={storageConfirmModal?.subtitle}
+          description={<p className="text-xs text-zinc-300">{storageConfirmModal?.description}</p>}
+          confirmText={storageConfirmModal?.confirmText ?? "Confirm"}
+          cancelText="Cancel"
+          loading={storageDeleting || Boolean(storageDeletingUrl)}
+          variant="danger"
+        />
       </div>
     </div>
   );

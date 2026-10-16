@@ -17,6 +17,7 @@ export type SchoolConfig = {
   }[];
   sections: string[];
   classSections?: Record<string, string[]>;
+  teacherLateTime?: string;
 };
 
 export function getSectionsForClass(
@@ -116,6 +117,7 @@ export const DEFAULT_SCHOOL_CONFIG: SchoolConfig = {
     "Vocational Class A": ["Section A"],
     "Vocational Class B": ["Section A"],
   },
+  teacherLateTime: "09:00 AM",
 };
 
 export async function getSchoolConfig(db: Firestore): Promise<SchoolConfig> {
@@ -138,6 +140,10 @@ export async function getSchoolConfig(db: Firestore): Promise<SchoolConfig> {
     wings: Array.isArray(data.wings) && data.wings.length > 0 ? data.wings : DEFAULT_SCHOOL_CONFIG.wings,
     sections: Array.isArray(data.sections) && data.sections.length > 0 ? data.sections : DEFAULT_SCHOOL_CONFIG.sections,
     classSections: classSections ?? DEFAULT_SCHOOL_CONFIG.classSections ?? {},
+    teacherLateTime:
+      typeof data.teacherLateTime === "string" && data.teacherLateTime.trim()
+        ? data.teacherLateTime.trim()
+        : DEFAULT_SCHOOL_CONFIG.teacherLateTime ?? "09:00 AM",
   };
 }
 

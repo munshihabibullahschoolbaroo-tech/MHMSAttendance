@@ -37,6 +37,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
+import { Separator } from "@/components/ui/separator";
 
 type Student = {
   id: string;
@@ -216,33 +217,56 @@ export function StudentAttendanceBoard({
     void loadDelegation();
   }, [loadDelegation]);
 
+  const currentUid = getFirebaseAuth().currentUser?.uid;
+  const isSubstituteForThisClass = Boolean(delegation?.active && delegation.substituteTeacherId === currentUid);
+
   const openSubstituteModal = async () => {
     setIsSubModalOpen(true);
     setDelegationStartDate(todayStr);
-    if (facultyList.length === 0) {
-      setLoadingFaculty(true);
-      try {
-        const auth = getFirebaseAuth();
-        const u = auth.currentUser;
-        if (!u) return;
-        const token = await u.getIdToken();
-        const res = await fetch("/api/school/teachers", {
+    setLoadingFaculty(true);
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) return;
+      const token = await u.getIdToken();
+      const [teachersRes, coveragesRes] = await Promise.all([
+        fetch("/api/school/teachers", {
           headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const json = (await res.json()) as { teachers?: FacultyMember[] };
-          const teachers: FacultyMember[] = json.teachers || [];
-          const filtered = teachers.filter((t) => t.id !== u.uid);
-          setFacultyList(filtered);
-          if (filtered.length > 0 && !substituteTeacherId) {
+        }),
+        fetch("/api/school/students/substitute?mine=true", {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+
+      if (teachersRes.ok) {
+        const json = (await teachersRes.json()) as { teachers?: FacultyMember[] };
+        const teachers: FacultyMember[] = json.teachers || [];
+
+        // Exclude current teacher AND any teacher who has delegated their class to current teacher (prevents circular loops)
+        const blockedTeacherIds = new Set<string>();
+        blockedTeacherIds.add(u.uid);
+
+        if (coveragesRes.ok) {
+          const covJson = await coveragesRes.json();
+          if (Array.isArray(covJson.delegations)) {
+            covJson.delegations.forEach((d: { permanentTeacherId?: string }) => {
+              if (d.permanentTeacherId) blockedTeacherIds.add(d.permanentTeacherId);
+            });
+          }
+        }
+
+        const filtered = teachers.filter((t) => !blockedTeacherIds.has(t.id));
+        setFacultyList(filtered);
+        if (filtered.length > 0) {
+          if (!substituteTeacherId || blockedTeacherIds.has(substituteTeacherId)) {
             setSubstituteTeacherId(filtered[0]!.id);
           }
         }
-      } catch {
-        toast.error("Failed to load teachers list");
-      } finally {
-        setLoadingFaculty(false);
       }
+    } catch {
+      toast.error("Failed to load teachers list");
+    } finally {
+      setLoadingFaculty(false);
     }
   };
 
@@ -287,6 +311,9 @@ export function StudentAttendanceBoard({
         setDelegation(json.delegation);
       }
       setIsSubModalOpen(false);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("substitute-delegation-changed"));
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error assigning substitute teacher");
     } finally {
@@ -315,8 +342,11 @@ export function StudentAttendanceBoard({
 
       toast.success(json.message ?? "Substitute delegation revoked");
       setDelegation(null);
-      setIsSubModalOpen(false);
       setRevokeSubConfirmOpen(false);
+      setIsSubModalOpen(false);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("substitute-delegation-changed"));
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error revoking substitute");
     } finally {
@@ -340,11 +370,8 @@ export function StudentAttendanceBoard({
         setStatusMap(cachedAtt.map);
         setAlreadySaved(cachedAtt.saved);
       } else {
-        const defaultMap: Record<string, RecordStatus> = {};
-        cachedRoster.forEach((s) => {
-          defaultMap[s.id] = "present";
-        });
-        setStatusMap(defaultMap);
+        setStatusMap({});
+        setAlreadySaved(false);
       }
       setLoading(false);
     } else {
@@ -414,11 +441,8 @@ export function StudentAttendanceBoard({
           }
         }
 
-        // Default all present if no prior record
+        // If no prior attendance was recorded for this date, keep all students unmarked
         const map: Record<string, RecordStatus> = {};
-        roster.forEach((s) => {
-          map[s.id] = "present";
-        });
         if (!cancelled) {
           setStatusMap(map);
           setAlreadySaved(false);
@@ -777,12 +801,17 @@ export function StudentAttendanceBoard({
                 <CardTitle className="text-lg md:text-xl font-bold">
                   {classId} — {sectionId}
                 </CardTitle>
-                {alreadySaved && (
+                {alreadySaved ? (
                   <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-500/10 dark:text-emerald-400 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
                     <CheckCircle2 className="h-3 w-3" />
                     Submitted
                   </span>
-                )}
+                ) : isPast ? (
+                  <span className="flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-500/10 dark:text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                    <AlertTriangle className="h-3 w-3" />
+                    No Record
+                  </span>
+                ) : null}
                 {isPast && (
                   <span className="flex items-center gap-1 text-[11px] font-semibold text-zinc-600 bg-zinc-100 dark:text-zinc-300 dark:bg-white/10 px-2.5 py-0.5 rounded-full border border-zinc-200 dark:border-white/10">
                     Past Record (View Only)
@@ -836,6 +865,51 @@ export function StudentAttendanceBoard({
         )}
 
         <CardContent className={cn("space-y-4", embedded && "p-0 pt-2")}>
+        {/* Active Substitute Teacher Status Banner (Unified cleanly at TOP) */}
+        {delegation?.active && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="p-1 rounded-lg bg-blue-500/20 text-blue-600 dark:text-blue-400 shrink-0">
+                <UserCheck className="size-3.5" />
+              </span>
+              <div className="min-w-0 text-xs truncate">
+                {isSubstituteForThisClass ? (
+                  <>
+                    <span className="text-zinc-500 dark:text-zinc-400">Substitute Duty: </span>
+                    <span className="font-bold text-blue-600 dark:text-blue-400">
+                      Covering for {delegation.permanentTeacherName}
+                    </span>
+                    <span className="text-zinc-400 ml-1.5 hidden sm:inline text-[11px]">
+                      • {delegation.reason}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-zinc-500 dark:text-zinc-400">Substitute Authorized: </span>
+                    <span className="font-bold text-blue-600 dark:text-blue-400">
+                      {delegation.substituteTeacherName}
+                    </span>
+                    <span className="text-zinc-400 ml-1.5 hidden sm:inline text-[11px]">
+                      • {delegation.reason} ({delegation.startDate})
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+            {!isSubstituteForThisClass && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void openSubstituteModal()}
+                className="h-6 px-2 text-[10px] font-bold text-blue-600 dark:text-blue-400 border-blue-400/30 hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer shrink-0"
+              >
+                Manage
+              </Button>
+            )}
+          </div>
+        )}
+
         {effectiveReadOnly ? (
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-zinc-100/80 dark:bg-zinc-900/60 border border-zinc-200 dark:border-white/10 text-xs">
             <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-300">
@@ -844,7 +918,9 @@ export function StudentAttendanceBoard({
               </span>
               <span className="text-zinc-500 dark:text-zinc-400">
                 {isPast
-                  ? "Historical attendance is locked in view-only mode. Only today's attendance can be marked or edited."
+                  ? alreadySaved
+                    ? "Historical attendance is locked in view-only mode. Only today's attendance can be marked or edited."
+                    : "No attendance was recorded for this date. All students are unmarked because roll call was not submitted."
                   : "Editing is disabled for this record."}
               </span>
             </div>
@@ -856,36 +932,40 @@ export function StudentAttendanceBoard({
 
         {/* Mobile Action Bar: Compact Tools Button + Primary Update & Save Button */}
         {!effectiveReadOnly && (
-          <div className="flex items-center gap-2 md:hidden border-b border-zinc-200 pb-3 dark:border-white/10">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setMobileToolsOpen(true)}
-              className="h-10 px-3.5 gap-1.5 border-zinc-200 dark:border-white/15 bg-zinc-50 dark:bg-white/5 font-semibold text-xs shrink-0 cursor-pointer"
-              title="Class Tools & Actions"
-            >
-              <SlidersHorizontal className="size-4 text-blue-500" />
-              <span>Tools</span>
-            </Button>
+          <div className="space-y-3 md:hidden">
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setMobileToolsOpen(true)}
+                className="h-10 px-3.5 gap-1.5 border-zinc-200 dark:border-white/15 bg-zinc-50 dark:bg-white/5 font-semibold text-xs shrink-0 cursor-pointer"
+                title="Class Tools & Actions"
+              >
+                <SlidersHorizontal className="size-4 text-blue-500" />
+                <span>Tools</span>
+              </Button>
 
-            <Button
-              type="button"
-              size="sm"
-              disabled={saving}
-              onClick={() => void saveAttendance()}
-              className="flex-1 h-10 gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-md shadow-blue-500/20 active:scale-[0.99] cursor-pointer"
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              <span>{alreadySaved ? "Update & Save" : "Save Attendance"}</span>
-            </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={saving}
+                onClick={() => void saveAttendance()}
+                className="flex-1 h-10 gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-md shadow-blue-500/20 active:scale-[0.99] cursor-pointer"
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                <span>{alreadySaved ? "Update & Save" : "Save Attendance"}</span>
+              </Button>
+            </div>
+            <Separator />
           </div>
         )}
 
         {/* Desktop Action Bar: Full Horizontal Toolbar */}
         {!effectiveReadOnly && (
-          <div className="hidden md:flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-3 dark:border-white/10">
-            <div className="flex flex-wrap items-center gap-1.5">
+          <div className="hidden md:block space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
               <Button
                 type="button"
                 size="sm"
@@ -919,26 +999,28 @@ export function StudentAttendanceBoard({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => void openSubstituteModal()}
-                className={cn(
-                  "h-8 gap-1.5 text-xs font-semibold shadow-xs transition-colors cursor-pointer",
-                  delegation?.active
-                    ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
-                    : "border-zinc-300 dark:border-white/15 text-zinc-700 dark:text-zinc-200 hover:border-blue-500"
-                )}
-                title="Delegate substitute teacher when on leave"
-              >
-                <UserCheck className="h-3.5 w-3.5 text-blue-500" />
-                <span>
-                  {delegation?.active
-                    ? `Substitute: ${delegation.substituteTeacherName.split(" ")[0]}`
-                    : "Substitute Teacher"}
-                </span>
-              </Button>
+              {!isSubstituteForThisClass && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void openSubstituteModal()}
+                  className={cn(
+                    "h-8 gap-1.5 text-xs font-semibold shadow-xs transition-colors cursor-pointer",
+                    delegation?.active
+                      ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
+                      : "border-zinc-300 dark:border-white/15 text-zinc-700 dark:text-zinc-200 hover:border-blue-500"
+                  )}
+                  title="Delegate substitute teacher when on leave"
+                >
+                  <UserCheck className="h-3.5 w-3.5 text-blue-500" />
+                  <span>
+                    {delegation?.active
+                      ? `Substitute: ${delegation.substituteTeacherName.split(" ")[0]}`
+                      : "Substitute Teacher"}
+                  </span>
+                </Button>
+              )}
               <Button
                 type="button"
                 size="sm"
@@ -961,39 +1043,11 @@ export function StudentAttendanceBoard({
               </Button>
             </div>
           </div>
-        )}
+          <Separator />
+        </div>
+      )}
 
-        {/* Active Substitute Teacher Delegation Banner */}
-        {delegation?.active && (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/25 text-xs">
-            <div className="flex items-center gap-2.5">
-              <span className="p-1.5 rounded-full bg-blue-500/20 text-blue-600 dark:text-blue-400 shrink-0">
-                <UserCheck className="size-4" />
-              </span>
-              <div>
-                <p className="font-semibold text-blue-950 dark:text-blue-100">
-                  Substitute Class Teacher Authorized:{" "}
-                  <strong className="text-blue-600 dark:text-blue-400 font-bold">
-                    {delegation.substituteTeacherName}
-                  </strong>
-                </p>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  Reason: {delegation.reason} · Period: {delegation.startDate}{" "}
-                  {delegation.endDate ? `to ${delegation.endDate}` : "(until revoked)"}
-                </p>
-              </div>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => void openSubstituteModal()}
-              className="h-7 text-[11px] font-semibold text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700/50 hover:bg-blue-100 dark:hover:bg-blue-900/40 cursor-pointer self-start sm:self-auto shrink-0"
-            >
-              Manage Delegation
-            </Button>
-          </div>
-        )}
+
 
         {/* Student list */}
         <div className="space-y-2 max-h-[550px] overflow-y-auto pr-1">
@@ -1299,14 +1353,14 @@ export function StudentAttendanceBoard({
                   <button
                     type="button"
                     onClick={() => setMobileToolsOpen(false)}
-                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     title="Close"
                   >
                     <X className="size-4" />
                   </button>
 
                   <div className="mx-auto mt-3 mb-2 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700" />
-                  <div className="flex items-center justify-between px-5 py-2.5 border-b border-zinc-100 dark:border-white/10 pr-14">
+                  <div className="flex items-center justify-between px-5 py-2.5 pr-14">
                     <div className="space-y-0.5">
                       <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
                         Class Attendance Tools
@@ -1316,6 +1370,7 @@ export function StudentAttendanceBoard({
                       </p>
                     </div>
                   </div>
+                  <Separator />
 
                   <div className="p-5 space-y-4 overflow-y-auto">
                     <div className="space-y-2">
@@ -1380,20 +1435,22 @@ export function StudentAttendanceBoard({
                           Add New Student to Roster
                         </Button>
 
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {
-                            setMobileToolsOpen(false);
-                            void openSubstituteModal();
-                          }}
-                          className="w-full h-11 justify-start gap-2.5 border-zinc-200 dark:border-white/15 text-zinc-700 dark:text-zinc-200 text-xs font-semibold"
-                        >
-                          <UserCheck className="size-4 text-blue-500" />
-                          {delegation?.active
-                            ? `Manage Substitute (${delegation.substituteTeacherName.split(" ")[0]})`
-                            : "Substitute Teacher Delegation"}
-                        </Button>
+                        {!isSubstituteForThisClass && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setMobileToolsOpen(false);
+                              void openSubstituteModal();
+                            }}
+                            className="w-full h-11 justify-start gap-2.5 border-zinc-200 dark:border-white/15 text-zinc-700 dark:text-zinc-200 text-xs font-semibold"
+                          >
+                            <UserCheck className="size-4 text-blue-500" />
+                            {delegation?.active
+                              ? `Manage Substitute (${delegation.substituteTeacherName.split(" ")[0]})`
+                              : "Substitute Teacher Delegation"}
+                          </Button>
+                        )}
 
                         <Button
                           type="button"
@@ -1458,13 +1515,13 @@ export function StudentAttendanceBoard({
                   <button
                     type="button"
                     onClick={() => setIsAddModalOpen(false)}
-                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     title="Close"
                   >
                     <X className="size-4" />
                   </button>
 
-                  <div className="flex flex-row items-center justify-between p-5 pb-3 pr-14 border-b border-zinc-100 dark:border-white/10 shrink-0">
+                  <div className="flex flex-row items-center justify-between p-5 pb-3 pr-14 shrink-0">
                     <div>
                       <h3 className="text-base font-bold flex items-center gap-2 text-zinc-900 dark:text-zinc-100">
                         <UserPlus className="size-4 text-blue-500" />
@@ -1475,6 +1532,7 @@ export function StudentAttendanceBoard({
                       </p>
                     </div>
                   </div>
+                  <Separator />
 
                   <form onSubmit={handleAddStudent} className="flex flex-col flex-1 overflow-hidden">
                     <div className="space-y-3.5 p-5 overflow-y-auto">
@@ -1590,13 +1648,13 @@ export function StudentAttendanceBoard({
                   <button
                     type="button"
                     onClick={() => setIsSubModalOpen(false)}
-                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     title="Close"
                   >
                     <X className="size-4" />
                   </button>
 
-                  <div className="flex items-center justify-between p-5 pr-14 border-b border-zinc-100 dark:border-white/10 shrink-0">
+                  <div className="flex items-center justify-between p-5 pr-14 shrink-0">
                     <div className="space-y-0.5">
                       <h3 className="text-base font-bold flex items-center gap-2 text-zinc-900 dark:text-zinc-100">
                         <UserCheck className="h-5 w-5 text-blue-600 dark:text-blue-400" />
@@ -1607,6 +1665,7 @@ export function StudentAttendanceBoard({
                       </p>
                     </div>
                   </div>
+                  <Separator />
 
                   <div className="p-5 space-y-4 overflow-y-auto flex-1">
                     {/* Existing active delegation status */}

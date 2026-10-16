@@ -10,11 +10,24 @@ export default function DashboardRootPage() {
   const router = useRouter();
 
   React.useEffect(() => {
-    if (loading) return;
-    if (user?.role === "admin" || user?.role === "super_admin") {
+    if (loading || !user) return;
+    if (user.role === "admin" || user.role === "super_admin") {
       router.replace("/dashboard/admin");
-    } else {
-      router.replace("/dashboard/employee/check-in");
+      return;
+    }
+    if (user.role === "employee") {
+      if (!user.onboarded) {
+        router.replace("/dashboard/onboarding");
+        return;
+      }
+      if (
+        user.workspaceAccessStatus === "pending" ||
+        user.workspaceAccessStatus === "rejected"
+      ) {
+        router.replace("/dashboard/waiting-approval");
+        return;
+      }
+      router.replace("/");
     }
   }, [user, loading, router]);
 

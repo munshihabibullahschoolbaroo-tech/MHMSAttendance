@@ -35,6 +35,7 @@ import { getFirebaseAuth } from "@/lib/firebase/client";
 import { MtesBrandLockup } from "@/components/client/mtes-brand-lockup";
 import { MhmsMark } from "@/components/mhms-mark";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
+import { Separator } from "@/components/ui/separator";
 
 type Props = {
   mobileOpen: boolean;
@@ -231,7 +232,8 @@ export function DashboardSidebar({
       ) : null}
 
       {/* Bottom Nav Links */}
-      <div className="pt-2 border-t border-zinc-100 dark:border-white/5 mt-1 space-y-1">
+      <div className="pt-1 mt-1 space-y-1">
+        <Separator className="my-2" />
         {bottomLinks.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
@@ -276,17 +278,21 @@ export function DashboardSidebar({
                 <MhmsMark className="size-10 drop-shadow" />
               </Link>
               {onToggleCollapse && (
-                <button
-                  type="button"
-                  onClick={onToggleCollapse}
-                  className="flex size-8 items-center justify-center rounded-xl border border-zinc-200/80 bg-zinc-100/80 text-zinc-600 transition-colors hover:border-zinc-300 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:border-white/20 dark:hover:bg-white/10 dark:hover:text-zinc-100 shadow-2xs cursor-pointer"
-                  title="Expand sidebar"
-                  aria-label="Expand sidebar"
-                >
-                  <PanelLeftOpen className="size-4" />
-                </button>
+                <div className="group relative flex items-center justify-center">
+                  <button
+                    type="button"
+                    onClick={onToggleCollapse}
+                    className="flex size-8 items-center justify-center rounded-xl border border-zinc-200/80 bg-zinc-100/80 text-zinc-600 transition-colors hover:border-zinc-300 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:border-white/20 dark:hover:bg-white/10 dark:hover:text-zinc-100 shadow-2xs cursor-pointer"
+                    aria-label="Expand sidebar"
+                  >
+                    <PanelLeftOpen className="size-4" />
+                  </button>
+                  <span className="pointer-events-none fixed left-[76px] z-[100050] hidden whitespace-nowrap rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white shadow-2xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900 border border-zinc-700/60 dark:border-zinc-300">
+                    Expand sidebar
+                  </span>
+                </div>
               )}
-              <div className="my-1 h-px w-8 bg-zinc-200/80 dark:bg-white/10" />
+              <Separator className="my-1.5 w-8" />
             </div>
           ) : (
             <>
@@ -316,7 +322,7 @@ export function DashboardSidebar({
                   <Link
                     key={href}
                     href={href}
-                    title={label}
+                    aria-label={label}
                     className={cn(
                       "group relative flex size-10 items-center justify-center rounded-xl transition-all",
                       active
@@ -325,7 +331,7 @@ export function DashboardSidebar({
                     )}
                   >
                     <Icon className="size-5 shrink-0" />
-                    <span className="pointer-events-none fixed left-[74px] z-[1300] hidden whitespace-nowrap rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white shadow-xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900">
+                    <span className="pointer-events-none fixed left-[76px] z-[100050] hidden whitespace-nowrap rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white shadow-2xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900 border border-zinc-700/60 dark:border-zinc-300">
                       {label}
                     </span>
                   </Link>
@@ -334,14 +340,14 @@ export function DashboardSidebar({
 
               {isAdminLike ? (
                 <>
-                  <div className="my-1.5 h-px w-6 bg-zinc-200/80 dark:bg-white/10" />
+                  <Separator className="my-1.5 w-6" />
                   {adminSubLinks.map(({ href, label, icon: Icon }) => {
                     const active = adminLinkActive(href);
                     return (
                       <Link
                         key={href}
                         href={href}
-                        title={label}
+                        aria-label={label}
                         className={cn(
                           "group relative flex size-10 items-center justify-center rounded-xl transition-all",
                           active
@@ -350,7 +356,7 @@ export function DashboardSidebar({
                         )}
                       >
                         <Icon className="size-4.5 shrink-0" />
-                        <span className="pointer-events-none fixed left-[74px] z-[1300] hidden whitespace-nowrap rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white shadow-xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900">
+                        <span className="pointer-events-none fixed left-[76px] z-[100050] hidden whitespace-nowrap rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white shadow-2xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900 border border-zinc-700/60 dark:border-zinc-300">
                           {label}
                         </span>
                       </Link>
@@ -359,7 +365,7 @@ export function DashboardSidebar({
                 </>
               ) : null}
 
-              <div className="my-1.5 h-px w-6 bg-zinc-200/80 dark:bg-white/10" />
+              <Separator className="my-1.5 w-6" />
 
               {bottomLinks.map(({ href, label, icon: Icon }) => {
                 const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -367,7 +373,7 @@ export function DashboardSidebar({
                   <Link
                     key={href}
                     href={href}
-                    title={label}
+                    aria-label={label}
                     className={cn(
                       "group relative flex size-10 items-center justify-center rounded-xl transition-all",
                       active
@@ -376,7 +382,7 @@ export function DashboardSidebar({
                     )}
                   >
                     <Icon className="size-5 shrink-0" />
-                    <span className="pointer-events-none fixed left-[74px] z-[1300] hidden whitespace-nowrap rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white shadow-xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900">
+                    <span className="pointer-events-none fixed left-[76px] z-[100050] hidden whitespace-nowrap rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white shadow-2xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900 border border-zinc-700/60 dark:border-zinc-300">
                       {label}
                     </span>
                   </Link>
@@ -390,23 +396,33 @@ export function DashboardSidebar({
 
         {/* Footer */}
         {collapsed ? (
-          <div className="mt-auto flex flex-col items-center gap-2 border-t border-zinc-200/90 pt-3 dark:border-white/10">
-            <div title="Theme">
+          <div className="mt-auto flex flex-col items-center gap-2 pt-2">
+            <Separator className="mb-1" />
+            <div className="group relative flex items-center justify-center">
               <ThemeToggle />
+              <span className="pointer-events-none fixed left-[76px] z-[100050] hidden whitespace-nowrap rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white shadow-2xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900 border border-zinc-700/60 dark:border-zinc-300">
+                Theme
+              </span>
             </div>
-            <Button
-              type="button"
-              variant="secondary"
-              size="icon"
-              className="size-9 rounded-xl text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400"
-              title="Sign out"
-              onClick={() => void signOut(getFirebaseAuth())}
-            >
-              <LogOut className="size-4" />
-            </Button>
+            <div className="group relative flex items-center justify-center">
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                className="size-9 rounded-xl text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400 cursor-pointer"
+                aria-label="Sign out"
+                onClick={() => void signOut(getFirebaseAuth())}
+              >
+                <LogOut className="size-4" />
+              </Button>
+              <span className="pointer-events-none fixed left-[76px] z-[100050] hidden whitespace-nowrap rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white shadow-2xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900 border border-zinc-700/60 dark:border-zinc-300">
+                Sign out
+              </span>
+            </div>
           </div>
         ) : (
-          <div className="mt-auto flex flex-col gap-3 border-t border-zinc-200/90 pt-4 dark:border-white/10">
+          <div className="mt-auto flex flex-col gap-3 pt-2">
+            <Separator className="mb-1" />
             <div className="flex items-center justify-between px-1">
               <span className="text-xs text-zinc-500">Theme</span>
               <ThemeToggle />
@@ -457,7 +473,7 @@ export function DashboardSidebar({
                   className="fixed inset-y-0 left-0 z-10 flex w-[min(85vw,300px)] flex-col border-r border-zinc-200/90 bg-white/98 py-4 px-3.5 shadow-2xl backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-950/98"
                 >
                   {/* Mobile Header with Brand & Close Button */}
-                  <div className="mb-4 flex items-center justify-between gap-2 border-b border-zinc-100 pb-3 dark:border-white/10">
+                  <div className="mb-3 flex items-center justify-between gap-2">
                     <MtesBrandLockup variant="sidebar" className="min-w-0 pr-1 flex-1" showLogo />
                     <motion.button
                       whileTap={{ scale: 0.88 }}
@@ -469,6 +485,7 @@ export function DashboardSidebar({
                       <X className="size-4.5" />
                     </motion.button>
                   </div>
+                  <Separator className="mb-3" />
 
                   {/* Mobile Nav Links */}
                   <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
@@ -476,7 +493,8 @@ export function DashboardSidebar({
                   </nav>
 
                   {/* Mobile Footer */}
-                  <div className="mt-auto flex flex-col gap-3 border-t border-zinc-200/90 pt-3.5 dark:border-white/10">
+                  <div className="mt-auto flex flex-col gap-3 pt-2">
+                    <Separator className="mb-1" />
                     <div className="flex items-center justify-between px-1">
                       <span className="text-xs font-medium text-zinc-500">Theme</span>
                       <ThemeToggle />

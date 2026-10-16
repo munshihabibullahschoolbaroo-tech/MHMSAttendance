@@ -7,6 +7,7 @@ import { jsonError } from "@/lib/api/json-error";
 import { haversineMeters } from "@/lib/geo/haversine";
 import { getSchoolConfig } from "@/lib/school/config";
 import { getDayKeyFromDate, getIanaTimeZone } from "@/lib/date/timezone";
+import { isPastLateCutoff } from "@/lib/date/late-check";
 
 export const runtime = "nodejs";
 
@@ -68,6 +69,9 @@ export async function POST(req: Request) {
     });
   }
 
+  const lateCheck = isPastLateCutoff(new Date(), config.teacherLateTime || "09:00 AM", timeZone);
+  const isLate = lateCheck.isLate;
+
   const sessionData = {
     teacherId: auth.decoded.uid,
     teacherName: (userData.name as string) || auth.decoded.email?.split("@")[0] || "Teacher",
@@ -88,6 +92,10 @@ export async function POST(req: Request) {
       distanceM: distance,
     },
     status: "present" as const,
+    isLate: isLate === true,
+    lateArrival: isLate === true,
+    lateMinutes: lateCheck.minutesLate,
+    cutoffTime: lateCheck.cutoffFormatted,
     updatedAt: FieldValue.serverTimestamp(),
   };
 
@@ -101,6 +109,8 @@ export async function POST(req: Request) {
         date: dateKey,
         siteId: "mhms_main_campus",
         status: "present",
+        isLate: isLate === true,
+        lateArrival: isLate === true,
         checkIn: {
           time: FieldValue.serverTimestamp(),
           gps: { latitude, longitude, accuracyM: accuracy },

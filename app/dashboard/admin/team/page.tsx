@@ -12,7 +12,7 @@ export default function AdminTeamPage() {
             or remove admins. Regular admins do not see this page.
           </p>
         </div>
-        <div className="max-w-lg">
+        <div className="max-w-3xl">
           <AdminAddAdminForm />
         </div>
       </div>

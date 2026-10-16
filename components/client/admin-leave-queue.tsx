@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, resolveDocumentViewUrl } from "@/lib/utils";
 import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
 
 type LeaveRequest = {
@@ -34,11 +34,16 @@ type LeaveRequest = {
   wingId: string;
   position: string;
   designation: string;
-  type: "casual" | "medical";
+  type: "casual" | "medical" | "emergency" | "on_duty" | string;
+  isEmergencyDeparture?: boolean;
+  departureTime?: string;
+  willReturn?: boolean;
+  returnTime?: string | null;
   startDate: string;
   endDate: string;
   reason: string;
   documentUrl?: string | null;
+  documentUrls?: string[] | null;
   status: "pending" | "approved" | "rejected";
   createdAt?: { _seconds?: number; seconds?: number };
   adminNotes?: string | null;
@@ -51,6 +56,13 @@ export function AdminLeaveQueue() {
   const [processingId, setProcessingId] = React.useState<string | null>(null);
   const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
   const [bulkBusy, setBulkBusy] = React.useState(false);
+
+  // In-app custom rejection modal state (replacing window.prompt)
+  const [rejectTarget, setRejectTarget] = React.useState<{
+    id: string;
+    teacherName: string;
+  } | null>(null);
+  const [rejectNotes, setRejectNotes] = React.useState("");
 
   const fetchLeaves = React.useCallback(async () => {
     try {
@@ -77,14 +89,7 @@ export function AdminLeaveQueue() {
     void fetchLeaves();
   }, [fetchLeaves]);
 
-  const handleReview = async (leaveId: string, action: "approve" | "reject") => {
-    let notes = "";
-    if (action === "reject") {
-      const promptRes = window.prompt("Reason for rejection (optional):");
-      if (promptRes === null) return; // User cancelled
-      notes = promptRes;
-    }
-
+  const handleReview = async (leaveId: string, action: "approve" | "reject", notes = "") => {
     setProcessingId(leaveId);
     try {
       const auth = getFirebaseAuth();
@@ -112,6 +117,14 @@ export function AdminLeaveQueue() {
     } finally {
       setProcessingId(null);
     }
+  };
+
+  const handleConfirmSingleReject = async () => {
+    if (!rejectTarget) return;
+    const { id } = rejectTarget;
+    const notes = rejectNotes.trim();
+    setRejectTarget(null);
+    await handleReview(id, "reject", notes);
   };
 
   const [bulkActionTarget, setBulkActionTarget] = React.useState<{
@@ -236,7 +249,7 @@ export function AdminLeaveQueue() {
 
       {/* Bulk Approval & Quick Selection Toolbar */}
       {pendingCount > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200/70 bg-gradient-to-r from-blue-50/80 via-blue-50/40 to-white p-4 shadow-xs dark:border-blue-900/30 dark:bg-blue-950/20">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-500/20 bg-blue-500/[0.05] p-4 shadow-xs dark:border-blue-500/20 dark:bg-blue-950/30 backdrop-blur-md">
           <div className="flex items-center gap-2.5">
             <button
               type="button"
@@ -324,6 +337,8 @@ export function AdminLeaveQueue() {
           {filteredLeaves.map((leave) => {
             const isPending = leave.status === "pending";
             const isMedical = leave.type === "medical";
+            const isEmergency = leave.type === "emergency" || leave.isEmergencyDeparture === true;
+            const isOnDuty = leave.type === "on_duty";
             const isSelected = selectedIds.includes(leave.id);
 
             return (
@@ -331,7 +346,7 @@ export function AdminLeaveQueue() {
                 key={leave.id}
                 className={cn(
                   "border-zinc-200 shadow-sm transition-all dark:border-white/10",
-                  isPending && "border-l-4 border-l-amber-500",
+                  isPending && (isEmergency ? "border-l-4 border-l-red-500" : isOnDuty ? "border-l-4 border-l-purple-500" : "border-l-4 border-l-amber-500"),
                   isSelected && "ring-2 ring-blue-500/70 border-blue-400 bg-blue-50/10"
                 )}
               >
@@ -365,13 +380,17 @@ export function AdminLeaveQueue() {
                           </span>
                           <span
                             className={cn(
-                              "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
-                              isMedical
+                              "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1",
+                              isEmergency
+                                ? "bg-red-500/15 text-red-700 dark:text-red-400 border border-red-500/30"
+                                : isOnDuty
+                                ? "bg-purple-500/15 text-purple-700 dark:text-purple-400 border border-purple-500/30"
+                                : isMedical
                                 ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20"
                                 : "bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20"
                             )}
                           >
-                            {leave.type} Leave
+                            {isEmergency ? "🚨 Emergency Departure" : isOnDuty ? "🏛️ On-Duty (OD)" : `${leave.type} Leave`}
                           </span>
                           <span
                             className={cn(
@@ -419,19 +438,32 @@ export function AdminLeaveQueue() {
 
                     {/* Right: Actions & Document Preview */}
                     <div className="flex flex-col sm:flex-row lg:flex-col items-start lg:items-end gap-2.5 shrink-0 pt-2 lg:pt-0">
-                      {/* Attached Document (Doctor note/prescription) */}
-                      {leave.documentUrl && (
-                        <a
-                          href={leave.documentUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-950/20 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 transition-colors shadow-sm"
-                        >
-                          <FileText className="h-3.5 w-3.5" />
-                          View Medical Doc
-                          <ExternalLink className="h-3 w-3 opacity-70" />
-                        </a>
-                      )}
+                      {/* Attached Documents (Doctor notes/prescriptions/lab tests) */}
+                      {(() => {
+                        const docs = Array.isArray(leave.documentUrls) && leave.documentUrls.length > 0
+                          ? leave.documentUrls
+                          : (leave.documentUrl ? [leave.documentUrl] : []);
+
+                        if (docs.length === 0) return null;
+
+                        return (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {docs.map((url, idx) => (
+                              <a
+                                key={url + idx}
+                                href={resolveDocumentViewUrl(url)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-950/20 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors shadow-xs"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                <span>{docs.length > 1 ? `Medical Doc ${idx + 1}` : "View Medical Doc"}</span>
+                                <ExternalLink className="h-3 w-3 opacity-70" />
+                              </a>
+                            ))}
+                          </div>
+                        );
+                      })()}
 
                       {/* Individual Approval Buttons */}
                       {isPending && (
@@ -441,7 +473,10 @@ export function AdminLeaveQueue() {
                             size="sm"
                             variant="outline"
                             disabled={processingId === leave.id || bulkBusy}
-                            onClick={() => void handleReview(leave.id, "reject")}
+                            onClick={() => {
+                              setRejectNotes("");
+                              setRejectTarget({ id: leave.id, teacherName: leave.teacherName });
+                            }}
                             className="gap-1 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-500/20 dark:hover:bg-red-950/20 text-xs"
                           >
                             <X className="h-3.5 w-3.5" />
@@ -472,12 +507,39 @@ export function AdminLeaveQueue() {
         </div>
       )}
 
+      {/* DangerConfirmModal for Single Leave Rejection */}
+      <DangerConfirmModal
+        open={Boolean(rejectTarget)}
+        onClose={() => setRejectTarget(null)}
+        onConfirm={handleConfirmSingleReject}
+        title="Reject Leave Request"
+        subtitle={rejectTarget ? `Staff Member: ${rejectTarget.teacherName}` : undefined}
+        description={
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-300">
+              Are you sure you want to reject this leave request? You can provide an explanation note below for the staff member.
+            </p>
+            <textarea
+              value={rejectNotes}
+              onChange={(e) => setRejectNotes(e.target.value)}
+              placeholder="Reason for rejection (optional)..."
+              rows={3}
+              className="w-full rounded-xl border border-red-500/30 bg-zinc-900 p-2.5 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none resize-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+            />
+          </div>
+        }
+        confirmText="Reject Leave"
+        cancelText="Cancel"
+        loading={Boolean(processingId)}
+        variant="danger"
+      />
+
       {/* DangerConfirmModal for Bulk Leave Review */}
       <DangerConfirmModal
         open={Boolean(bulkActionTarget)}
         onClose={() => setBulkActionTarget(null)}
         onConfirm={handleConfirmBatchReview}
-        title={bulkActionTarget?.action === "approve" ? "Approve Leaves" : "Danger zone"}
+        title={bulkActionTarget?.action === "approve" ? "Approve Leaves" : "Reject Leaves"}
         subtitle={
           bulkActionTarget
             ? `Bulk ${bulkActionTarget.action} for ${bulkActionTarget.ids.length} application(s)`
@@ -485,7 +547,7 @@ export function AdminLeaveQueue() {
         }
         description={
           <div className="space-y-3">
-            <p>
+            <p className="text-xs text-zinc-300">
               {bulkActionTarget?.action === "approve"
                 ? `Are you sure you want to approve ${bulkActionTarget?.ids.length} selected employee leave request(s)? Attendance records will automatically reflect approved leave status.`
                 : `Are you sure you want to reject ${bulkActionTarget?.ids.length} selected leave request(s)? You can provide an optional rejection explanation below.`}

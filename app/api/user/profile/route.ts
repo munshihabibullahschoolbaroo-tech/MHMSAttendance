@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 const bodySchema = z.object({
   name: z.string().trim().min(1, "Name cannot be empty"),
   designation: z.string().trim().optional(),
+  photoUrl: z.string().trim().optional().nullable(),
 });
 
 export async function POST(req: Request) {
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
     return jsonError(parsed.error.issues[0]?.message ?? "Invalid body", 400);
   }
 
-  const { name, designation } = parsed.data;
+  const { name, designation, photoUrl } = parsed.data;
   const uid = auth.decoded.uid;
 
   const updatePayload: Record<string, unknown> = {
@@ -36,14 +37,19 @@ export async function POST(req: Request) {
   if (designation !== undefined) {
     updatePayload.designation = designation;
   }
+  if (photoUrl !== undefined) {
+    updatePayload.photoUrl = photoUrl;
+  }
 
   await adminDb().collection("users").doc(uid).set(updatePayload, { merge: true });
 
   try {
-    await adminAuth().updateUser(uid, { displayName: name });
+    const authUpdate: { displayName: string; photoURL?: string } = { displayName: name };
+    if (photoUrl) authUpdate.photoURL = photoUrl;
+    await adminAuth().updateUser(uid, authUpdate);
   } catch (err) {
-    console.warn("Failed to update Firebase Auth displayName:", err);
+    console.warn("Failed to update Firebase Auth displayName/photoURL:", err);
   }
 
-  return NextResponse.json({ ok: true, name, designation });
+  return NextResponse.json({ ok: true, name, designation, photoUrl });
 }

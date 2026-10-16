@@ -28,15 +28,18 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { getFirebaseAuth } from "@/lib/firebase/client";
+import { Separator } from "@/components/ui/separator";
 import { TableRowsSkeleton } from "@/components/client/dashboard-skeletons";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { UserAvatar } from "@/components/client/user-avatar";
 
 export type LoginAccessUser = {
   id: string;
   employeeId?: string;
   name: string;
   email: string;
+  photoUrl?: string | null;
   role: string;
   phone?: string | null;
   schoolWingId?: string | null;
@@ -187,7 +190,7 @@ export function AdminLoginAccessPanel() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-zinc-200/80 dark:border-white/10 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2">
         <div>
           <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
             <UserCheck className="size-5 text-blue-500" />
@@ -204,6 +207,7 @@ export function AdminLoginAccessPanel() {
           </span>
         </div>
       </div>
+      <Separator />
 
       {err ? (
         <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400 text-xs font-medium">
@@ -258,9 +262,12 @@ export function AdminLoginAccessPanel() {
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                       <div className="flex items-start gap-3 min-w-0">
                         {/* Avatar */}
-                        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500/10 to-indigo-500/20 text-blue-600 dark:text-blue-400 font-bold text-xs border border-blue-500/20">
-                          {initials}
-                        </div>
+                        <UserAvatar
+                          name={displayName}
+                          photoUrl={r.photoUrl}
+                          className="size-10 shrink-0"
+                          textClassName="text-xs"
+                        />
 
                         <div className="min-w-0 space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
@@ -443,7 +450,7 @@ export function AdminLoginAccessPanel() {
           >
             <div className="relative w-full max-w-xl rounded-2xl border border-zinc-200/90 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-950 max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
               {/* Modal Header */}
-              <div className="flex items-center justify-between border-b border-zinc-200/80 px-5 py-4 dark:border-white/10">
+              <div className="flex items-center justify-between px-5 py-4">
                 <div className="flex items-center gap-2.5">
                   <div className="flex size-9 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
                     <ShieldCheck className="size-5" />
@@ -465,15 +472,19 @@ export function AdminLoginAccessPanel() {
                   <X className="size-5" />
                 </button>
               </div>
+              <Separator />
 
               {/* Modal Body: Detailed Breakdown */}
               <div className="flex-1 overflow-y-auto p-5 space-y-5 text-sm">
                 {/* Teacher Profile Summary Box */}
                 <div className="p-4 rounded-xl border border-blue-500/20 bg-blue-50/40 dark:bg-blue-950/20 flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
-                    <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white font-bold text-base shadow-sm">
-                      {selectedUser.name?.charAt(0)?.toUpperCase() || "T"}
-                    </div>
+                    <UserAvatar
+                      name={selectedUser.name || "Staff Member"}
+                      photoUrl={selectedUser.photoUrl}
+                      className="size-12 shrink-0 shadow-sm"
+                      textClassName="text-base font-bold"
+                    />
                     <div>
                       <h4 className="font-bold text-zinc-900 dark:text-zinc-100 text-base">
                         {selectedUser.name || "Staff Member"}
@@ -582,7 +593,8 @@ export function AdminLoginAccessPanel() {
               </div>
 
               {/* Modal Footer Actions */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-zinc-200/80 bg-zinc-50/80 px-5 py-4 dark:border-white/10 dark:bg-zinc-900/60">
+              <Separator />
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-zinc-50/80 px-5 py-4 dark:bg-zinc-900/60">
                 <Button
                   type="button"
                   variant="outline"

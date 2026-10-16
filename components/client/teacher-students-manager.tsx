@@ -38,6 +38,7 @@ import { useDashboardUser } from "@/components/client/dashboard-user-context";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { Separator } from "@/components/ui/separator";
 
 type MonthAttendanceSummary = {
   date: string;
@@ -137,6 +138,46 @@ export function TeacherStudentsManager() {
     }>
   >([]);
 
+  // School-wide assigned classes to filter out already assigned classes from switch requests
+  const [assignedClassesList, setAssignedClassesList] = React.useState<
+    Array<{ classId: string; sectionId: string; wingId?: string; teacherName?: string }>
+  >([]);
+
+  const fetchAssignedClasses = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/school/positions-status");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.assignedClasses)) {
+        setAssignedClassesList(data.assignedClasses);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void fetchAssignedClasses();
+    const onDelegationChanged = () => {
+      void fetchAssignedClasses();
+    };
+    window.addEventListener("substitute-delegation-changed", onDelegationChanged);
+    return () => window.removeEventListener("substitute-delegation-changed", onDelegationChanged);
+  }, [fetchAssignedClasses]);
+
+  const isSectionAssigned = React.useCallback(
+    (classId: string, section: string) => {
+      const normCls = classId.trim().toLowerCase();
+      const normSec = section.replace(/^section\s+/i, "").trim().toLowerCase();
+      return assignedClassesList.some(
+        (a) =>
+          a.classId.trim().toLowerCase() === normCls &&
+          a.sectionId.replace(/^section\s+/i, "").trim().toLowerCase() === normSec
+      );
+    },
+    [assignedClassesList]
+  );
+
   // Switch request modal state
   const [isSwitchModalOpen, setIsSwitchModalOpen] = React.useState(false);
   const [targetClass, setTargetClass] = React.useState("");
@@ -179,6 +220,10 @@ export function TeacherStudentsManager() {
     e.preventDefault();
     if (!targetClass || !targetSection || !switchReason.trim()) {
       toast.error("Please fill in target class, section, and reason.");
+      return;
+    }
+    if (isSectionAssigned(targetClass, targetSection)) {
+      toast.error(`${targetClass} ${targetSection} is already assigned to another teacher.`);
       return;
     }
     setSubmittingSwitch(true);
@@ -304,6 +349,10 @@ export function TeacherStudentsManager() {
       toast.error("Please choose a class and section");
       return;
     }
+    if (isSectionAssigned(assignClass, assignSection)) {
+      toast.error(`${assignClass} ${assignSection} is already assigned to another teacher.`);
+      return;
+    }
     setSubmittingAssign(true);
     try {
       const auth = getFirebaseAuth();
@@ -336,11 +385,6 @@ export function TeacherStudentsManager() {
     }
   };
 
-  const handleOpenSwitchModal = (c?: string, s?: string) => {
-    setTargetClass(c || selectedClass);
-    setTargetSection(s || selectedSection);
-    setIsSwitchModalOpen(true);
-  };
 
   const handleBackToMyClass = () => {
     if (user?.schoolClassId) {
@@ -398,31 +442,33 @@ export function TeacherStudentsManager() {
     }>
   >([]);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    const fetchCoverages = async () => {
-      try {
-        const auth = getFirebaseAuth();
-        const u = auth.currentUser;
-        if (!u) return;
-        const token = await u.getIdToken();
-        const res = await fetch("/api/school/students/substitute?mine=true", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled && Array.isArray(data.delegations)) {
-          setMyCoverages(data.delegations);
-        }
-      } catch {
-        /* ignore */
+  const fetchCoverages = React.useCallback(async () => {
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) return;
+      const token = await u.getIdToken();
+      const res = await fetch("/api/school/students/substitute?mine=true", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.delegations)) {
+        setMyCoverages(data.delegations);
       }
-    };
-    void fetchCoverages();
-    return () => {
-      cancelled = true;
-    };
+    } catch {
+      /* ignore */
+    }
   }, []);
+
+  React.useEffect(() => {
+    void fetchCoverages();
+    const handleSubChange = () => {
+      void fetchCoverages();
+    };
+    window.addEventListener("substitute-delegation-changed", handleSubChange);
+    return () => window.removeEventListener("substitute-delegation-changed", handleSubChange);
+  }, [fetchCoverages]);
 
   // Load school config
   React.useEffect(() => {
@@ -488,6 +534,159 @@ export function TeacherStudentsManager() {
     return getSectionsForClass(config, selectedClass);
   }, [config, selectedClass]);
 
+  // Accessible classes: Admins see all classes.
+  // Teachers ONLY see classes they have access to:
+  // 1. Their main assigned class (main assigne)
+  // 2. Shared access / substitute coverage classes (myCoverages) - across ANY wing
+  // 3. Approved temporary class switch (approvedSwitch) - across ANY wing
+  const accessibleClasses = React.useMemo(() => {
+    if (isAdmin) {
+      return availableClasses;
+    }
+    const list: string[] = [];
+    if (user?.schoolClassId && !list.includes(user.schoolClassId)) {
+      list.push(user.schoolClassId);
+    }
+    myCoverages.forEach((cov) => {
+      if (cov.classId && !list.includes(cov.classId)) {
+        list.push(cov.classId);
+      }
+    });
+    if (approvedSwitch?.requestedClass && !list.includes(approvedSwitch.requestedClass)) {
+      list.push(approvedSwitch.requestedClass);
+    }
+
+    return list;
+  }, [isAdmin, availableClasses, user?.schoolClassId, myCoverages, approvedSwitch]);
+
+  // Switch: Available classes in user's category that have at least one unassigned section
+  const switchAvailableClasses = React.useMemo(() => {
+    return availableClasses.filter((c) => {
+      const secs = getSectionsForClass(config, c);
+      return secs.some(
+        (s) =>
+          !(c === user?.schoolClassId && s === user?.schoolSectionId) &&
+          !isSectionAssigned(c, s)
+      );
+    });
+  }, [availableClasses, config, user?.schoolClassId, user?.schoolSectionId, isSectionAssigned]);
+
+  // Switch: Available unassigned sections for targetClass
+  const switchAvailableSections = React.useMemo(() => {
+    const cls = targetClass || switchAvailableClasses[0] || availableClasses[0];
+    if (!cls) return [];
+    const secs = getSectionsForClass(config, cls);
+    return secs.filter(
+      (s) =>
+        !(cls === user?.schoolClassId && s === user?.schoolSectionId) &&
+        !isSectionAssigned(cls, s)
+    );
+  }, [config, targetClass, switchAvailableClasses, availableClasses, user?.schoolClassId, user?.schoolSectionId, isSectionAssigned]);
+
+  // Appointment: Available classes in assignWing that have at least one unassigned section
+  const assignAvailableClasses = React.useMemo(() => {
+    const wingClasses = config.wings.find((w) => w.id === assignWing)?.classes || [];
+    return wingClasses.filter((c) => {
+      const secs = getSectionsForClass(config, c);
+      return secs.some((s) => !isSectionAssigned(c, s));
+    });
+  }, [config, assignWing, isSectionAssigned]);
+
+  // Appointment: Available unassigned sections for assignClass
+  const assignAvailableSections = React.useMemo(() => {
+    const cls = assignClass || assignAvailableClasses[0];
+    if (!cls) return [];
+    const secs = getSectionsForClass(config, cls);
+    return secs.filter((s) => !isSectionAssigned(cls, s));
+  }, [config, assignClass, assignAvailableClasses, isSectionAssigned]);
+
+  const handleOpenSwitchModal = React.useCallback(
+    (c?: string, s?: string) => {
+      const getValidSecs = (cls: string) => {
+        return getSectionsForClass(config, cls).filter(
+          (sec) =>
+            !(cls === user?.schoolClassId && sec === user?.schoolSectionId) &&
+            !isSectionAssigned(cls, sec)
+        );
+      };
+
+      let chosenClass =
+        c && switchAvailableClasses.includes(c)
+          ? c
+          : (switchAvailableClasses[0] || c || availableClasses[0] || "Class 1");
+
+      let chosenSecs = getValidSecs(chosenClass);
+      if (chosenSecs.length === 0 && switchAvailableClasses.length > 0) {
+        chosenClass = switchAvailableClasses[0];
+        chosenSecs = getValidSecs(chosenClass);
+      }
+      const chosenSec = s && chosenSecs.includes(s) ? s : (chosenSecs[0] || "");
+
+      setTargetClass(chosenClass);
+      setTargetSection(chosenSec);
+      setIsSwitchModalOpen(true);
+    },
+    [config, switchAvailableClasses, availableClasses, user?.schoolClassId, user?.schoolSectionId, isSectionAssigned]
+  );
+
+  const getAllowedSectionsForClass = React.useCallback(
+    (cls: string) => {
+      const allSecs = getSectionsForClass(config, cls);
+      if (isAdmin) return allSecs;
+
+      const set = new Set<string>();
+      if (user?.schoolClassId === cls && user?.schoolSectionId) {
+        set.add(user.schoolSectionId);
+      }
+      myCoverages.forEach((cov) => {
+        if (cov.classId === cls && cov.sectionId) {
+          set.add(cov.sectionId);
+        }
+      });
+      if (approvedSwitch?.requestedClass === cls && approvedSwitch?.requestedSection) {
+        set.add(approvedSwitch.requestedSection);
+      }
+
+      const filtered = allSecs.filter((s) => set.has(s));
+      return filtered.length > 0 ? filtered : allSecs;
+    },
+    [config, isAdmin, user?.schoolClassId, user?.schoolSectionId, myCoverages, approvedSwitch]
+  );
+
+  const accessibleSections = React.useMemo(() => {
+    return getAllowedSectionsForClass(selectedClass);
+  }, [getAllowedSectionsForClass, selectedClass]);
+
+  const handleSelectClass = React.useCallback(
+    (nextClass: string, nextSection?: string) => {
+      const targetWing = config.wings.find((w) => w.classes.includes(nextClass))?.id;
+      if (targetWing) setSelectedWing(targetWing);
+      setSelectedClass(nextClass);
+      if (nextSection) {
+        setSelectedSection(nextSection);
+      } else {
+        const allowedSecs = getAllowedSectionsForClass(nextClass);
+        if (allowedSecs[0]) setSelectedSection(allowedSecs[0]);
+      }
+    },
+    [config.wings, getAllowedSectionsForClass]
+  );
+
+  // Keep selectedClass synchronized to an accessible class
+  React.useEffect(() => {
+    if (!isAdmin && accessibleClasses.length > 0 && !accessibleClasses.includes(selectedClass)) {
+      const first = accessibleClasses[0]!;
+      handleSelectClass(first);
+    }
+  }, [isAdmin, accessibleClasses, selectedClass, handleSelectClass]);
+
+  // Keep selectedSection synchronized to an accessible section
+  React.useEffect(() => {
+    if (!isAdmin && accessibleSections.length > 0 && !accessibleSections.includes(selectedSection)) {
+      setSelectedSection(accessibleSections[0]!);
+    }
+  }, [isAdmin, accessibleSections, selectedSection]);
+
   // Calendar math for monthly view
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
@@ -530,20 +729,55 @@ export function TeacherStudentsManager() {
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Top Banner */}
       <div className="rounded-2xl border border-zinc-200/90 bg-gradient-to-r from-blue-900/10 via-blue-500/5 to-transparent p-4 md:p-6 shadow-sm dark:border-white/10 dark:from-blue-950/30">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
                 <GraduationCap className="size-4" />
-                Student Attendance Portal
+                Attendance Portal
               </span>
               <span className="rounded-full bg-blue-500/10 px-2.5 py-0.5 text-[10px] font-bold text-blue-600 dark:text-blue-400 border border-blue-500/20">
                 {config.wings.find((w) => w.id === selectedWing)?.name || selectedWing}
               </span>
-              {user?.isClassTeacher && (
+
+              {/* Show only ONE context-relevant role badge for the active class */}
+              {myCoverages.some((cov) => cov.classId === selectedClass && cov.sectionId === selectedSection) ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    Substitute Teacher ({myCoverages.find((cov) => cov.classId === selectedClass && cov.sectionId === selectedSection)?.permanentTeacherName})
+                  </span>
+                  {user?.schoolClassId && (
+                    <button
+                      type="button"
+                      onClick={handleBackToMyClass}
+                      className="inline-flex items-center gap-1 rounded-full bg-zinc-200/60 dark:bg-zinc-800 px-2 py-0.5 text-[10px] font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors cursor-pointer"
+                      title="Back to my assigned class"
+                    >
+                      <RotateCcw className="size-2.5" />
+                      <span>My Class</span>
+                    </button>
+                  )}
+                </div>
+              ) : approvedSwitch && selectedClass === approvedSwitch.requestedClass ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="rounded-full bg-purple-500/10 px-2.5 py-0.5 text-[10px] font-bold text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                    Temporary Switch
+                  </span>
+                  {user?.schoolClassId && (
+                    <button
+                      type="button"
+                      onClick={handleBackToMyClass}
+                      className="inline-flex items-center gap-1 rounded-full bg-zinc-200/60 dark:bg-zinc-800 px-2 py-0.5 text-[10px] font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors cursor-pointer"
+                    >
+                      <RotateCcw className="size-2.5" />
+                      <span>My Class</span>
+                    </button>
+                  )}
+                </div>
+              ) : user?.isClassTeacher && selectedClass === user?.schoolClassId ? (
                 <div className="flex items-center gap-1.5">
                   <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                    Class Incharge ({user.schoolClassId})
+                    Class Incharge
                   </span>
                   <button
                     type="button"
@@ -553,15 +787,14 @@ export function TeacherStudentsManager() {
                     title="Remove myself as Class Teacher"
                   >
                     {unassigning ? <Loader2 className="size-3 animate-spin" /> : <UserX className="size-3" />}
-                    <span>Unassign Myself</span>
+                    <span>Unassign</span>
                   </button>
                 </div>
-              )}
-              {!isAdmin && !user?.isClassTeacher && user?.pendingClassAssignment?.status === "pending" && (
+              ) : !isAdmin && !user?.isClassTeacher && user?.pendingClassAssignment?.status === "pending" ? (
                 <div className="flex items-center gap-1.5">
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 border border-amber-500/20">
                     <Clock className="size-3 animate-pulse" />
-                    Assignment Pending ({user.pendingClassAssignment.classId})
+                    Assignment Pending
                   </span>
                   <button
                     type="button"
@@ -574,25 +807,18 @@ export function TeacherStudentsManager() {
                     <span>Cancel</span>
                   </button>
                 </div>
-              )}
-              {approvedSwitch && selectedClass === approvedSwitch.requestedClass && (
-                <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-[10px] font-bold text-purple-600 dark:text-purple-400 border border-purple-500/20">
-                  Temporary 1-Time Access (Admin Approved)
-                </span>
-              )}
+              ) : null}
             </div>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white flex items-center gap-2">
+
+            <h1 className="mt-1 text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-white flex items-center gap-2">
               {!hasAssignedClass && user?.pendingClassAssignment?.status === "pending"
                 ? `${user.pendingClassAssignment.classId} — ${user.pendingClassAssignment.sectionId}`
                 : `${selectedClass} — ${selectedSection}`}
             </h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Daily student attendance records, historical day access, and individual student calendar reports.
-            </p>
           </div>
 
-          {/* Quick Date Jumper & Actions */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Quick Date Jumper: Clean and concise */}
+          <div className="flex items-center gap-2">
             {!isAdmin && !user?.isClassTeacher && user?.pendingClassAssignment?.status !== "pending" && (
               <Button
                 type="button"
@@ -607,27 +833,10 @@ export function TeacherStudentsManager() {
                   }
                   setIsAssignModalOpen(true);
                 }}
-                className="h-8 rounded-xl text-xs font-bold gap-1.5 bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
+                className="h-9 rounded-xl text-xs font-bold gap-1.5 bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
               >
                 <UserCheck className="size-3.5" />
-                Assign Me as Class Teacher
-              </Button>
-            )}
-
-            {!isAdmin && user?.isClassTeacher && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setTargetClass(selectedClass);
-                  setTargetSection(selectedSection);
-                  setIsSwitchModalOpen(true);
-                }}
-                className="h-8 rounded-xl text-xs font-bold gap-1.5 border-blue-200 text-blue-700 dark:border-blue-900/50 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 shadow-xs cursor-pointer"
-              >
-                <Shuffle className="size-3.5 text-blue-600" />
-                Request Class Switch
+                <span>Assign Me</span>
               </Button>
             )}
 
@@ -635,7 +844,7 @@ export function TeacherStudentsManager() {
               type="button"
               onClick={() => setSelectedDate(todayStr)}
               className={cn(
-                "px-3 py-2 text-xs font-semibold rounded-xl border transition-all h-10",
+                "px-3 py-2 text-xs font-semibold rounded-xl border transition-all h-9 shrink-0 cursor-pointer",
                 selectedDate === todayStr
                   ? "bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-500/30"
                   : "bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-white/10 hover:bg-zinc-50 dark:hover:bg-white/5"
@@ -650,17 +859,16 @@ export function TeacherStudentsManager() {
                 onChange={(val) => {
                   if (!val) return;
                   if (val > todayStr) {
-                    toast.error(`Cannot access ${val} because it is in the future.`);
+                    toast.error(`Cannot select ${val} because it is in the future.`);
                     return;
                   }
                   setSelectedDate(val);
                 }}
-                title="Roll Call Date"
-                align="right"
               />
             </div>
           </div>
         </div>
+
 
         {/* Approved Temporary Class Switch Banner */}
         {approvedSwitch && (
@@ -718,42 +926,6 @@ export function TeacherStudentsManager() {
           </div>
         )}
 
-        {/* Active Substitute Coverage Duties for this teacher */}
-        {myCoverages.length > 0 && (
-          <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-            <div className="flex items-center gap-2.5">
-              <span className="p-1.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
-                <Users className="size-4" />
-              </span>
-              <div>
-                <p className="font-semibold text-amber-950 dark:text-amber-200">
-                  Substitute Coverage Active ({myCoverages.length} assigned):
-                </p>
-                <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                  {myCoverages.map((cov) => (
-                    <button
-                      key={`${cov.classId}_${cov.sectionId}`}
-                      type="button"
-                      onClick={() => {
-                        setSelectedClass(cov.classId);
-                        setSelectedSection(cov.sectionId);
-                        setActiveView("rollcall");
-                      }}
-                      className={cn(
-                        "px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer border transition-colors",
-                        selectedClass === cov.classId && selectedSection === cov.sectionId
-                          ? "bg-amber-600 text-white border-amber-600"
-                          : "bg-white/90 dark:bg-zinc-800 border-amber-300 dark:border-amber-700/50 text-amber-900 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/40"
-                      )}
-                    >
-                      {cov.classId} — {cov.sectionId} ({cov.permanentTeacherName})
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* View Switcher Tabs (Desktop Only) */}
         <div className="hidden md:flex mt-5 items-center justify-between border-t border-zinc-200/70 pt-4 dark:border-white/10 flex-wrap gap-3">
@@ -812,19 +984,15 @@ export function TeacherStudentsManager() {
             <div className="w-40">
               <AppSelect
                 value={selectedClass}
-                onChange={(nextClass) => {
-                  setSelectedClass(nextClass);
-                  const secs = getSectionsForClass(config, nextClass);
-                  if (secs[0]) setSelectedSection(secs[0]);
-                }}
-                options={availableClasses.map((c) => {
+                onChange={(nextClass) => handleSelectClass(nextClass)}
+                options={accessibleClasses.map((c) => {
                   const isMyClass = c === user?.schoolClassId;
+                  const isSubstitute = myCoverages.some((cov) => cov.classId === c);
                   const isApproved = approvedSwitch?.requestedClass === c;
-                  const isPermitted = isAdmin || isMyClass || isApproved;
                   return {
                     value: c,
                     label: c,
-                    badge: !isPermitted ? "Locked" : isMyClass ? "Assigned" : undefined,
+                    badge: isMyClass ? "Assigned" : isSubstitute ? "Substitute" : isApproved ? "Switch" : undefined,
                   };
                 })}
                 title="Select Class"
@@ -835,7 +1003,7 @@ export function TeacherStudentsManager() {
               <AppSelect
                 value={selectedSection}
                 onChange={setSelectedSection}
-                options={availableSections.map((s) => ({ value: s, label: s }))}
+                options={accessibleSections.map((s) => ({ value: s, label: s }))}
                 title="Select Section"
               />
             </div>
@@ -845,11 +1013,7 @@ export function TeacherStudentsManager() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => {
-                  setTargetClass(selectedClass);
-                  setTargetSection(selectedSection);
-                  setIsSwitchModalOpen(true);
-                }}
+                onClick={() => handleOpenSwitchModal()}
                 className="h-10 text-xs font-bold gap-1 px-3 rounded-xl border-blue-200 text-blue-700 dark:border-blue-900/50 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 shadow-xs cursor-pointer"
                 title="Request class switch approval from administration"
               >
@@ -1005,6 +1169,49 @@ export function TeacherStudentsManager() {
                 Tools &gt;
               </div>
             </motion.div>
+
+            {/* Mobile Class & Section Selector at the bottom */}
+            <div className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 shadow-sm space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <GraduationCap className="size-3.5 text-blue-500" />
+                  Select Class &amp; Section
+                </span>
+                {!isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenSwitchModal()}
+                    className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Shuffle className="size-3" />
+                    Request Switch
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2.5">
+                <AppSelect
+                  value={selectedClass}
+                  onChange={(nextClass) => handleSelectClass(nextClass)}
+                  options={accessibleClasses.map((c) => {
+                    const isMyClass = c === user?.schoolClassId;
+                    const isSubstitute = myCoverages.some((cov) => cov.classId === c);
+                    const isApproved = approvedSwitch?.requestedClass === c;
+                    return {
+                      value: c,
+                      label: c,
+                      badge: isMyClass ? "Assigned" : isSubstitute ? "Substitute" : isApproved ? "Switch" : undefined,
+                    };
+                  })}
+                  title="Select Class"
+                />
+                <AppSelect
+                  value={selectedSection}
+                  onChange={setSelectedSection}
+                  options={accessibleSections.map((s) => ({ value: s, label: s }))}
+                  title="Select Section"
+                />
+              </div>
+            </div>
           </div>
 
           {/* DESKTOP VIEWS (Hidden on Mobile) */}
@@ -1173,7 +1380,7 @@ export function TeacherStudentsManager() {
         createPortal(
           <AnimatePresence>
             {mobileRollCallOpen && (
-              <div className="fixed inset-0 z-[10000] flex flex-col justify-end">
+              <div className="md:hidden fixed inset-0 z-[10000] flex flex-col justify-end">
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -1194,7 +1401,7 @@ export function TeacherStudentsManager() {
                   <button
                     type="button"
                     onClick={() => setMobileRollCallOpen(false)}
-                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     title="Close"
                   >
                     <X className="size-4" />
@@ -1203,7 +1410,7 @@ export function TeacherStudentsManager() {
                   {/* Drag Handle */}
                   <div className="mx-auto mt-3 mb-1 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700" />
                   {/* Header */}
-                  <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 dark:border-white/10 pr-14">
+                  <div className="flex items-center justify-between px-5 py-3 pr-14">
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
@@ -1221,6 +1428,7 @@ export function TeacherStudentsManager() {
                       </p>
                     </div>
                   </div>
+                  <Separator />
 
                   {/* Body */}
                   <div className="flex-1 overflow-y-auto overscroll-contain p-4 pb-12">
@@ -1248,7 +1456,7 @@ export function TeacherStudentsManager() {
         createPortal(
           <AnimatePresence>
             {mobileCalendarOpen && (
-              <div className="fixed inset-0 z-[10000] flex flex-col justify-end">
+              <div className="md:hidden fixed inset-0 z-[10000] flex flex-col justify-end">
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -1269,7 +1477,7 @@ export function TeacherStudentsManager() {
                   <button
                     type="button"
                     onClick={() => setMobileCalendarOpen(false)}
-                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     title="Close"
                   >
                     <X className="size-4" />
@@ -1278,7 +1486,7 @@ export function TeacherStudentsManager() {
                   {/* Drag Handle */}
                   <div className="mx-auto mt-3 mb-1 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700" />
                   {/* Header */}
-                  <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 dark:border-white/10 pr-14">
+                  <div className="flex items-center justify-between px-5 py-3 pr-14">
                     <div>
                       <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
                         <CalendarIcon className="size-4 text-blue-500" />
@@ -1305,6 +1513,7 @@ export function TeacherStudentsManager() {
                       </button>
                     </div>
                   </div>
+                  <Separator />
 
                   {/* Body */}
                   <div className="flex-1 overflow-y-auto overscroll-contain p-4 pb-12">
@@ -1416,7 +1625,7 @@ export function TeacherStudentsManager() {
         createPortal(
           <AnimatePresence>
             {mobileToolsOpen && (
-              <div className="fixed inset-0 z-[10000] flex flex-col justify-end">
+              <div className="md:hidden fixed inset-0 z-[10000] flex flex-col justify-end">
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -1437,7 +1646,7 @@ export function TeacherStudentsManager() {
                   <button
                     type="button"
                     onClick={() => setMobileToolsOpen(false)}
-                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     title="Close"
                   >
                     <X className="size-4" />
@@ -1446,132 +1655,22 @@ export function TeacherStudentsManager() {
                   {/* Drag Handle */}
                   <div className="mx-auto mt-3 mb-1 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700" />
                   {/* Header */}
-                  <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 dark:border-white/10 pr-14">
+                  <div className="flex items-center justify-between px-5 py-3 pr-14">
                     <div>
                       <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
                         <SlidersHorizontal className="size-4 text-amber-500" />
                         Class Tools &amp; Settings
                       </h3>
                       <p className="text-[11px] text-zinc-500">
-                        Switch class, date, or substitute delegation
+                        Roll call date selection &amp; shortcuts
                       </p>
                     </div>
                   </div>
+                  <Separator />
 
                   {/* Body */}
                   <div className="flex-1 overflow-y-auto overscroll-contain p-5 space-y-4 pb-12">
-                    {/* Class & Section Switcher */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
-                          Select Class &amp; Section
-                        </label>
-                        {!isAdmin && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setTargetClass(selectedClass);
-                              setTargetSection(selectedSection);
-                              setIsSwitchModalOpen(true);
-                            }}
-                            className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                          >
-                            <Shuffle className="size-3" />
-                            Request Switch
-                          </button>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <AppSelect
-                          value={selectedClass}
-                          onChange={(nextClass) => {
-                            setSelectedClass(nextClass);
-                            const secs = getSectionsForClass(config, nextClass);
-                            if (secs[0]) setSelectedSection(secs[0]);
-                          }}
-                          options={availableClasses.map((c) => {
-                            const isMyClass = c === user?.schoolClassId;
-                            const isApproved = approvedSwitch?.requestedClass === c;
-                            const isPermitted = isAdmin || isMyClass || isApproved;
-                            return {
-                              value: c,
-                              label: c,
-                              badge: !isPermitted ? "Locked" : isMyClass ? "Assigned" : undefined,
-                            };
-                          })}
-                          title="Select Class"
-                        />
-                        <AppSelect
-                          value={selectedSection}
-                          onChange={setSelectedSection}
-                          options={availableSections.map((s) => ({ value: s, label: s }))}
-                          title="Select Section"
-                        />
-                      </div>
 
-                      {/* Self-assignment / unassign options inside mobile tools */}
-                      {user?.isClassTeacher ? (
-                        <div className="pt-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMobileToolsOpen(false);
-                              setUnassignConfirmOpen(true);
-                            }}
-                            className="w-full text-xs font-semibold py-2 px-3 rounded-xl border border-red-200 dark:border-red-900/40 text-red-600 dark:text-red-400 bg-red-50/50 dark:bg-red-950/20 flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <UserX className="size-3.5" />
-                            Remove Myself as Class Teacher
-                          </button>
-                        </div>
-                      ) : !isAdmin && (
-                        <div className="pt-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMobileToolsOpen(false);
-                              setAssignWing(teacherWing);
-                              const w = config.wings.find((x) => x.id === teacherWing) || config.wings[0];
-                              if (w?.classes[0]) {
-                                setAssignClass(w.classes[0]);
-                                const secs = getSectionsForClass(config, w.classes[0]);
-                                if (secs[0]) setAssignSection(secs[0]);
-                              }
-                              setIsAssignModalOpen(true);
-                            }}
-                            className="w-full text-xs font-bold py-2.5 px-3 rounded-xl bg-blue-600 text-white flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
-                          >
-                            <UserCheck className="size-3.5" />
-                            Assign Me as Class Teacher
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Approved switch quick switcher pill for mobile */}
-                      {approvedSwitch && (
-                        <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between gap-2 mt-2">
-                          <div className="text-[11px] text-emerald-900 dark:text-emerald-200">
-                            <strong>Approved Switch:</strong> {approvedSwitch.requestedClass} ({approvedSwitch.requestedSection})
-                          </div>
-                          {selectedClass !== approvedSwitch.requestedClass ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedClass(approvedSwitch.requestedClass);
-                                setSelectedSection(approvedSwitch.requestedSection);
-                              }}
-                              className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-1 rounded-md cursor-pointer"
-                            >
-                              Switch Now
-                            </button>
-                          ) : (
-                            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                              Active
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
 
                     {/* Date Selection */}
                     <div className="space-y-2">
@@ -1668,7 +1767,7 @@ export function TeacherStudentsManager() {
                     type="button"
                     onClick={() => setIsSwitchModalOpen(false)}
                     disabled={submittingSwitch}
-                    className="absolute top-4 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-4 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     aria-label="Close"
                   >
                     <X className="size-4" />
@@ -1697,39 +1796,48 @@ export function TeacherStudentsManager() {
                   </div>
 
                   <form onSubmit={handleSendSwitchRequest} className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                          Target Class
-                        </label>
-                        <AppSelect
-                          value={targetClass || availableClasses[0] || "Class 1"}
-                          onChange={(nextClass) => {
-                            setTargetClass(nextClass);
-                            const secs = getSectionsForClass(config, nextClass);
-                            if (secs[0]) setTargetSection(secs[0]);
-                          }}
-                          options={availableClasses.map((c) => ({
-                            value: c,
-                            label: c,
-                            sublabel: c === user?.schoolClassId ? "Currently Assigned" : undefined,
-                          }))}
-                          title="Select Target Class"
-                        />
+                    {switchAvailableClasses.length === 0 ? (
+                      <div className="p-3 text-xs rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+                        All classes and sections in your category are currently assigned to teachers. There are no available unassigned classes to switch to.
                       </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                            Target Class
+                          </label>
+                          <AppSelect
+                            value={targetClass || switchAvailableClasses[0] || ""}
+                            onChange={(nextClass) => {
+                              setTargetClass(nextClass);
+                              const secs = getSectionsForClass(config, nextClass).filter(
+                                (s) =>
+                                  !(nextClass === user?.schoolClassId && s === user?.schoolSectionId) &&
+                                  !isSectionAssigned(nextClass, s)
+                              );
+                              if (secs[0]) setTargetSection(secs[0]);
+                            }}
+                            options={switchAvailableClasses.map((c) => ({
+                              value: c,
+                              label: c,
+                            }))}
+                            title="Select Target Class"
+                          />
+                        </div>
 
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                          Target Section
-                        </label>
-                        <AppSelect
-                          value={targetSection || (getSectionsForClass(config, targetClass || availableClasses[0])[0] ?? "Section A")}
-                          onChange={setTargetSection}
-                          options={getSectionsForClass(config, targetClass || availableClasses[0]).map((s) => ({ value: s, label: s }))}
-                          title="Select Target Section"
-                        />
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                            Target Section
+                          </label>
+                          <AppSelect
+                            value={targetSection || (switchAvailableSections[0] ?? "")}
+                            onChange={setTargetSection}
+                            options={switchAvailableSections.map((s) => ({ value: s, label: s }))}
+                            title="Select Target Section"
+                          />
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
@@ -1757,7 +1865,13 @@ export function TeacherStudentsManager() {
                       </Button>
                       <Button
                         type="submit"
-                        disabled={submittingSwitch || !switchReason.trim()}
+                        disabled={
+                          submittingSwitch ||
+                          !switchReason.trim() ||
+                          switchAvailableClasses.length === 0 ||
+                          !targetClass ||
+                          !targetSection
+                        }
                         className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold gap-1.5"
                       >
                         {submittingSwitch ? (
@@ -1804,7 +1918,7 @@ export function TeacherStudentsManager() {
                     type="button"
                     onClick={() => setIsAssignModalOpen(false)}
                     disabled={submittingAssign}
-                    className="absolute top-4 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-4 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     aria-label="Close"
                   >
                     <X className="size-4" />
@@ -1835,10 +1949,19 @@ export function TeacherStudentsManager() {
                         onChange={(wId) => {
                           setAssignWing(wId);
                           const w = config.wings.find((x) => x.id === wId);
-                          if (w?.classes[0]) {
-                            setAssignClass(w.classes[0]);
-                            const secs = getSectionsForClass(config, w.classes[0]);
+                          const unassignedClasses = (w?.classes || []).filter((c) => {
+                            const secs = getSectionsForClass(config, c);
+                            return secs.some((s) => !isSectionAssigned(c, s));
+                          });
+                          if (unassignedClasses[0]) {
+                            setAssignClass(unassignedClasses[0]);
+                            const secs = getSectionsForClass(config, unassignedClasses[0]).filter(
+                              (s) => !isSectionAssigned(unassignedClasses[0], s)
+                            );
                             if (secs[0]) setAssignSection(secs[0]);
+                          } else {
+                            setAssignClass("");
+                            setAssignSection("");
                           }
                         }}
                         options={config.wings.map((w) => ({ value: w.id, label: w.name }))}
@@ -1846,38 +1969,44 @@ export function TeacherStudentsManager() {
                       />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                          Class
-                        </label>
-                        <AppSelect
-                          value={assignClass}
-                          onChange={(c) => {
-                            setAssignClass(c);
-                            const secs = getSectionsForClass(config, c);
-                            if (secs[0]) setAssignSection(secs[0]);
-                          }}
-                          options={(config.wings.find((w) => w.id === assignWing)?.classes || []).map((c) => ({
-                            value: c,
-                            label: c,
-                          }))}
-                          title="Select Class"
-                        />
+                    {assignAvailableClasses.length === 0 ? (
+                      <div className="p-3 text-xs rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+                        All classes and sections in this category are currently assigned to teachers.
                       </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                            Class
+                          </label>
+                          <AppSelect
+                            value={assignClass || assignAvailableClasses[0] || ""}
+                            onChange={(c) => {
+                              setAssignClass(c);
+                              const secs = getSectionsForClass(config, c).filter((s) => !isSectionAssigned(c, s));
+                              if (secs[0]) setAssignSection(secs[0]);
+                            }}
+                            options={assignAvailableClasses.map((c) => ({
+                              value: c,
+                              label: c,
+                            }))}
+                            title="Select Class"
+                          />
+                        </div>
 
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                          Section
-                        </label>
-                        <AppSelect
-                          value={assignSection}
-                          onChange={setAssignSection}
-                          options={getSectionsForClass(config, assignClass).map((s) => ({ value: s, label: s }))}
-                          title="Select Section"
-                        />
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                            Section
+                          </label>
+                          <AppSelect
+                            value={assignSection || assignAvailableSections[0] || ""}
+                            onChange={setAssignSection}
+                            options={assignAvailableSections.map((s) => ({ value: s, label: s }))}
+                            title="Select Section"
+                          />
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">

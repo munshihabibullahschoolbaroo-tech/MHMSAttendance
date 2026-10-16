@@ -13,8 +13,8 @@ export default function HomePage() {
       <div className="relative flex h-screen flex-col overflow-hidden">
         <div className="pointer-events-none absolute inset-0 hero-mesh opacity-90 dark:opacity-100" />
         <header className="relative z-10 flex items-center justify-between gap-3 px-3 py-4 md:px-6 md:py-5">
-          <MtesBrandHeaderLink showLogo={false} className="max-w-[min(100%,16rem)] md:max-w-lg" />
-          <LandingTopBar hideAvatar={true} />
+          <MtesBrandHeaderLink showLogo={true} className="max-w-[min(100%,18rem)] md:max-w-lg" />
+          <LandingTopBar />
         </header>
 
         <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-3 pb-20 pt-2 text-center md:px-6 md:pb-24 md:pt-6">

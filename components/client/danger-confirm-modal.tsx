@@ -62,7 +62,7 @@ export function DangerConfirmModal({
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[10005] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100150] flex items-center justify-center p-4">
           {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}

@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2,
   MapPin,
@@ -15,6 +17,10 @@ import {
   Copy,
   Layers,
   Sparkles,
+  Clock,
+  Pencil,
+  X,
+  FolderPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +28,7 @@ import { Input, formFieldLabelClass } from "@/components/ui/input";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { SchoolCampusMap } from "@/components/client/map/school-campus-map";
 import { SchoolConfig, DEFAULT_SCHOOL_CONFIG } from "@/lib/school/config";
+import { STANDARD_AM_CUTOFF_OPTIONS } from "@/lib/date/late-check";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
@@ -110,6 +117,28 @@ export function AdminOnboardingSettings({
     wingIdx: number;
     wingName: string;
     className: string;
+  } | null>(null);
+
+  // Add / Edit / Delete Class states
+  const [addClassModalOpen, setAddClassModalOpen] = React.useState(false);
+  const [newClassName, setNewClassName] = React.useState("");
+  const [newClassWingId, setNewClassWingId] = React.useState("");
+  const [newClassSections, setNewClassSections] = React.useState<string[]>([
+    "Section A",
+    "Section B",
+    "Section C",
+  ]);
+  const [customSectionInput, setCustomSectionInput] = React.useState("");
+
+  const [editClassModalOpen, setEditClassModalOpen] = React.useState(false);
+  const [editingClassName, setEditingClassName] = React.useState("");
+  const [editingClassWingId, setEditingClassWingId] = React.useState("");
+
+  const [deleteClassTarget, setDeleteClassTarget] = React.useState<{
+    className: string;
+    wingName: string;
+    wingIdx: number;
+    sectionCount: number;
   } | null>(null);
 
   const handleConfirmResetDefaults = () => {
@@ -280,6 +309,148 @@ export function AdminOnboardingSettings({
       return { ...prev, wings: nextWings };
     });
     toast.info(`Removed ${className} from ${targetWing?.name ?? "wing"}`);
+  };
+
+  // Create new class with wing categorization and initial sections
+  const handleCreateClass = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newClassName.trim();
+    if (!name) {
+      toast.error("Please enter a class name (e.g. 'Class 13' or 'Pre-KG')");
+      return;
+    }
+    if (allClasses.some((x) => x.className.toLowerCase() === name.toLowerCase())) {
+      toast.error(`A class named "${name}" already exists!`);
+      return;
+    }
+    const wingIdx = config.wings.findIndex((w) => w.id === newClassWingId);
+    if (wingIdx === -1) {
+      toast.error("Please select a wing category for this class");
+      return;
+    }
+
+    const sectionsToAssign =
+      newClassSections.length > 0 ? newClassSections : ["Section A"];
+
+    setConfig((prev) => {
+      const nextWings = [...prev.wings];
+      nextWings[wingIdx] = {
+        ...nextWings[wingIdx],
+        classes: [...nextWings[wingIdx].classes, name],
+      };
+      const nextClassSections = {
+        ...(prev.classSections ?? {}),
+        [name]: sectionsToAssign,
+      };
+      return {
+        ...prev,
+        wings: nextWings,
+        classSections: nextClassSections,
+      };
+    });
+
+    setSelectedClassForSections(name);
+    setAddClassModalOpen(false);
+    setNewClassName("");
+    toast.success(`Created "${name}" with ${sectionsToAssign.length} sections in ${config.wings[wingIdx].name}!`);
+  };
+
+  // Edit / Rename class and update wing categorization
+  const handleUpdateClass = (e: React.FormEvent) => {
+    e.preventDefault();
+    const newName = editingClassName.trim();
+    const oldName = selectedClassForSections;
+    if (!newName) {
+      toast.error("Class name cannot be empty");
+      return;
+    }
+    if (
+      newName !== oldName &&
+      allClasses.some((x) => x.className.toLowerCase() === newName.toLowerCase())
+    ) {
+      toast.error(`A class named "${newName}" already exists!`);
+      return;
+    }
+
+    const currentWingItem = allClasses.find((x) => x.className === oldName);
+    if (!currentWingItem) return;
+
+    const oldWingId = currentWingItem.wingId;
+    const newWingId = editingClassWingId || oldWingId;
+
+    setConfig((prev) => {
+      const nextWings = prev.wings.map((w) => {
+        if (w.id === oldWingId && oldWingId === newWingId) {
+          return {
+            ...w,
+            classes: w.classes.map((c) => (c === oldName ? newName : c)),
+          };
+        } else if (w.id === oldWingId) {
+          return {
+            ...w,
+            classes: w.classes.filter((c) => c !== oldName),
+          };
+        } else if (w.id === newWingId) {
+          return {
+            ...w,
+            classes: [...w.classes.filter((c) => c !== newName), newName],
+          };
+        }
+        return w;
+      });
+
+      const nextClassSections = { ...(prev.classSections ?? {}) };
+      const existingSections =
+        nextClassSections[oldName] ?? prev.sections ?? ["Section A", "Section B"];
+      if (newName !== oldName) {
+        delete nextClassSections[oldName];
+      }
+      nextClassSections[newName] = existingSections;
+
+      return {
+        ...prev,
+        wings: nextWings,
+        classSections: nextClassSections,
+      };
+    });
+
+    setSelectedClassForSections(newName);
+    setEditClassModalOpen(false);
+    toast.success(`Updated class details successfully!`);
+  };
+
+  // Permanently delete class
+  const handleDeleteClass = () => {
+    if (!deleteClassTarget) return;
+    const { className, wingIdx } = deleteClassTarget;
+
+    setConfig((prev) => {
+      const nextWings = [...prev.wings];
+      if (nextWings[wingIdx]) {
+        nextWings[wingIdx] = {
+          ...nextWings[wingIdx],
+          classes: nextWings[wingIdx].classes.filter((c) => c !== className),
+        };
+      }
+      const nextClassSections = { ...(prev.classSections ?? {}) };
+      delete nextClassSections[className];
+
+      return {
+        ...prev,
+        wings: nextWings,
+        classSections: nextClassSections,
+      };
+    });
+
+    const remaining = allClasses.filter((x) => x.className !== className);
+    if (remaining.length > 0) {
+      setSelectedClassForSections(remaining[0].className);
+    } else {
+      setSelectedClassForSections("");
+    }
+
+    toast.info(`Deleted class "${className}" and its section configurations.`);
+    setDeleteClassTarget(null);
   };
 
   const schoolTabs = [
@@ -476,6 +647,68 @@ export function AdminOnboardingSettings({
                 If teachers face GPS accuracy issues due to Kargil terrain/weather, increase the radius.
               </p>
             </label>
+
+            {/* Teacher Late Arrival Timing (Strictly AM) */}
+            <div className="pt-4 border-t border-zinc-200/80 dark:border-white/10 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className={cn(formFieldLabelClass, "flex items-center gap-1.5")}>
+                  <Clock className="size-3.5 text-amber-500" />
+                  Teacher Late Arrival Cutoff (AM Only)
+                </span>
+                <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                  Cutoff: {config.teacherLateTime || "09:00 AM"}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                School morning arrival time is strictly AM. Any teacher checking in after this time will see the <strong>&ldquo;You are late, sir!&rdquo;</strong> prompt card and be logged as Late Arrival.
+              </p>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                <div className="flex-1">
+                  <AppSelect
+                    value={
+                      STANDARD_AM_CUTOFF_OPTIONS.includes(config.teacherLateTime as any)
+                        ? (config.teacherLateTime as string)
+                        : "custom"
+                    }
+                    onChange={(val) => {
+                      if (val !== "custom") {
+                        setConfig((prev) => ({ ...prev, teacherLateTime: val }));
+                      }
+                    }}
+                    options={[
+                      ...STANDARD_AM_CUTOFF_OPTIONS.map((time) => ({
+                        value: time,
+                        label: `${time} ${time === "09:00 AM" ? "(Standard Default)" : ""}`,
+                      })),
+                      { value: "custom", label: "Custom AM Time…" },
+                    ]}
+                  />
+                </div>
+
+                {/* Custom AM Input */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Input
+                    type="text"
+                    value={config.teacherLateTime || "09:00 AM"}
+                    onChange={(e) => {
+                      let val = e.target.value.toUpperCase();
+                      // Enforce AM only: remove any PM, only allow numbers, colon and AM
+                      val = val.replace(/PM/g, "AM");
+                      if (!val.includes("AM") && val.trim().length >= 4) {
+                        val = val.replace(/\s*[A-Z]*$/, "").trim() + " AM";
+                      }
+                      setConfig((prev) => ({ ...prev, teacherLateTime: val }));
+                    }}
+                    placeholder="09:00 AM"
+                    className="w-28 text-center font-bold text-xs"
+                  />
+                  <span className="text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 dark:bg-amber-500/15 px-2.5 py-1.5 rounded-lg border border-amber-500/20">
+                    AM
+                  </span>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -496,50 +729,110 @@ export function AdminOnboardingSettings({
       {currentTab === "sections" && (
         <Card className="border-zinc-200 shadow-sm dark:border-white/10">
           <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <CardTitle className="text-base font-bold flex items-center gap-2">
                   <Layers className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  Class Sections (Per-Class Configuration)
+                  Class Sections & Categorization
                 </CardTitle>
-              <CardDescription className="text-xs">
-                Configure specific sections for each individual class so every class has its exact required sections.
-              </CardDescription>
+                <CardDescription className="text-xs">
+                  Create, rename, or delete school classes, categorize them by wing, and configure custom sections.
+                </CardDescription>
+              </div>
+
+              {/* Add New Class Button */}
+              <Button
+                type="button"
+                onClick={() => {
+                  setNewClassName("");
+                  setNewClassWingId(config.wings[0]?.id ?? "");
+                  setNewClassSections(["Section A", "Section B", "Section C"]);
+                  setAddClassModalOpen(true);
+                }}
+                className="gap-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl shadow-xs cursor-pointer h-9 px-3.5"
+              >
+                <Plus className="size-4" />
+                <span>Add New Class</span>
+              </Button>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Single Dropdown to select class */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-zinc-200 bg-zinc-50/80 dark:border-white/10 dark:bg-zinc-900/40">
-            <div className="space-y-0.5">
-              <label className="text-xs font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
-                Select Class to Customize Sections:
-              </label>
-              <p className="text-[11px] text-zinc-500">
-                Choose any class below to view and edit its dedicated sections.
-              </p>
-            </div>
-            <div className="min-w-[280px]">
-              <AppSelect
-                value={selectedClassForSections}
-                onChange={(val) => setSelectedClassForSections(val)}
-                options={config.wings.flatMap((w) =>
-                  w.classes.map((c) => {
-                    const count = (config.classSections?.[c] ?? config.sections ?? []).length;
-                    return {
-                      value: c,
-                      label: c,
-                      sublabel: `${w.name} • ${count} ${count === 1 ? "section" : "sections"}`,
-                      badge: `${count} sec`,
-                    };
-                  })
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Class Selector & Actions Bar */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 rounded-xl border border-zinc-200 bg-zinc-50/80 dark:border-white/10 dark:bg-zinc-900/40">
+              <div className="space-y-0.5">
+                <label className="text-xs font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+                  Select Class to Customize Sections:
+                </label>
+                <p className="text-[11px] text-zinc-500">
+                  Choose any class below to view its sections, rename it, or update its wing categorization.
+                </p>
+              </div>
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                <div className="min-w-[260px] flex-1">
+                  <AppSelect
+                    value={selectedClassForSections}
+                    onChange={(val) => setSelectedClassForSections(val)}
+                    options={config.wings.flatMap((w) =>
+                      w.classes.map((c) => {
+                        const count = (config.classSections?.[c] ?? config.sections ?? []).length;
+                        return {
+                          value: c,
+                          label: c,
+                          sublabel: `${w.name} • ${count} ${count === 1 ? "section" : "sections"}`,
+                          badge: `${count} sec`,
+                        };
+                      })
+                    )}
+                    drawerTitle="Select Class to Customize"
+                    searchable={true}
+                    searchPlaceholder="Search class..."
+                  />
+                </div>
+
+                {selectedClassForSections && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const currWing = allClasses.find((x) => x.className === selectedClassForSections)?.wingId;
+                        setEditingClassName(selectedClassForSections);
+                        setEditingClassWingId(currWing || (config.wings[0]?.id ?? ""));
+                        setEditClassModalOpen(true);
+                      }}
+                      className="h-10 px-3 gap-1.5 text-xs font-semibold rounded-xl border-zinc-200 dark:border-white/10 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                      title="Rename or change wing categorization"
+                    >
+                      <Pencil className="size-3.5 text-blue-600 dark:text-blue-400" />
+                      <span>Edit Class</span>
+                    </Button>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const currentItem = allClasses.find((x) => x.className === selectedClassForSections);
+                        if (!currentItem) return;
+                        const wingIdx = config.wings.findIndex((w) => w.id === currentItem.wingId);
+                        setDeleteClassTarget({
+                          className: selectedClassForSections,
+                          wingName: currentItem.wingName,
+                          wingIdx,
+                          sectionCount: activeClassSections.length,
+                        });
+                      }}
+                      className="h-10 px-3 gap-1.5 text-xs font-semibold rounded-xl border-red-500/20 bg-red-500/5 text-red-600 hover:bg-red-500/15 dark:text-red-400 dark:border-red-500/30 cursor-pointer"
+                      title="Delete this class"
+                    >
+                      <Trash2 className="size-3.5" />
+                      <span>Delete</span>
+                    </Button>
+                  </div>
                 )}
-                drawerTitle="Select Class to Customize"
-                searchable={true}
-                searchPlaceholder="Search class..."
-              />
+              </div>
             </div>
-          </div>
 
           {/* Active Class Sections Manager Box */}
           <div className="rounded-xl border border-blue-500/20 bg-blue-50/40 p-4 dark:border-blue-500/20 dark:bg-blue-950/20 space-y-4">
@@ -789,42 +1082,18 @@ export function AdminOnboardingSettings({
                     )}
                   </div>
 
-                  {/* Add Class Input Row */}
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <Input
-                      placeholder={`Add class (e.g. Class 13)`}
-                      value={newClassInputs[wing.id] ?? ""}
-                      onChange={(e) =>
-                        setNewClassInputs((prev) => ({ ...prev, [wing.id]: e.target.value }))
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          const val = (newClassInputs[wing.id] ?? "").trim();
-                          if (val) {
-                            handleAddClassToWing(wingIdx, val);
-                            setNewClassInputs((prev) => ({ ...prev, [wing.id]: "" }));
-                          }
-                        }
-                      }}
-                      className="h-8 text-xs px-2.5"
-                    />
-                    <Button
+                  {/* Note: Classes are added & categorized in Classes & Sections tab */}
+                  <p className="text-[10px] text-zinc-500 italic pt-1">
+                    To add new classes or edit sections, use the{" "}
+                    <button
                       type="button"
-                      size="sm"
-                      onClick={() => {
-                        const val = (newClassInputs[wing.id] ?? "").trim();
-                        if (val) {
-                          handleAddClassToWing(wingIdx, val);
-                          setNewClassInputs((prev) => ({ ...prev, [wing.id]: "" }));
-                        }
-                      }}
-                      className="h-8 px-2.5 text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold shrink-0 gap-1"
+                      onClick={() => setTab("sections")}
+                      className="text-blue-600 dark:text-blue-400 font-semibold underline hover:text-blue-500 cursor-pointer"
                     >
-                      <Plus className="size-3.5" />
-                      Add
-                    </Button>
-                  </div>
+                      Classes & Sections
+                    </button>{" "}
+                    tab.
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -861,6 +1130,303 @@ export function AdminOnboardingSettings({
           </span>
         }
         confirmText="Remove Class"
+        cancelText="Cancel"
+        variant="danger"
+      />
+
+      {/* Add New Class Modal */}
+      {typeof document !== "undefined" &&
+        createPortal(
+          <AnimatePresence>
+            {addClassModalOpen && (
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                  onClick={() => setAddClassModalOpen(false)}
+                />
+
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.96, y: 12 }}
+                  transition={{ type: "spring", damping: 25, stiffness: 320 }}
+                  className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-900 flex flex-col"
+                >
+                  <div className="flex items-center justify-between border-b border-zinc-100 p-4 dark:border-white/10 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                        <FolderPlus className="size-4" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
+                          Add New Class & Sections
+                        </h3>
+                        <p className="text-[11px] text-zinc-500">
+                          Create a class and assign its wing category
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAddClassModalOpen(false)}
+                      className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-white/15 dark:hover:text-zinc-100 transition-colors cursor-pointer"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleCreateClass} className="p-4 space-y-4 text-xs">
+                    {/* Class Name */}
+                    <div className="space-y-1.5">
+                      <label className={formFieldLabelClass}>Class Name *</label>
+                      <Input
+                        required
+                        placeholder="e.g. Class 13, Pre-KG, Special Arts"
+                        value={newClassName}
+                        onChange={(e) => setNewClassName(e.target.value)}
+                        className="text-xs h-9"
+                        autoFocus
+                      />
+                    </div>
+
+                    {/* Wing Categorization Dropdown */}
+                    <div className="space-y-1.5">
+                      <label className={formFieldLabelClass}>Wing Category *</label>
+                      <AppSelect
+                        value={newClassWingId}
+                        onChange={setNewClassWingId}
+                        placeholder="Select Wing Category..."
+                        options={config.wings.map((w) => ({
+                          value: w.id,
+                          label: w.name,
+                          sublabel: w.description,
+                        }))}
+                      />
+                    </div>
+
+                    {/* Initial Sections */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className={formFieldLabelClass}>Initial Sections ({newClassSections.length})</label>
+                        <div className="flex items-center gap-1 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => setNewClassSections(["Section A", "Section B", "Section C"])}
+                            className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:text-blue-600 font-medium cursor-pointer"
+                          >
+                            A, B, C
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNewClassSections(["Section A", "Section B"])}
+                            className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:text-blue-600 font-medium cursor-pointer"
+                          >
+                            A, B
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNewClassSections(["Section A"])}
+                            className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:text-blue-600 font-medium cursor-pointer"
+                          >
+                            A only
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Section pills */}
+                      <div className="flex flex-wrap gap-1.5 p-2 rounded-xl border border-zinc-200/70 dark:border-white/10 bg-zinc-50/50 dark:bg-zinc-950/40 min-h-[44px]">
+                        {newClassSections.map((sec) => (
+                          <span
+                            key={sec}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 text-blue-900 border border-blue-200 dark:bg-blue-950/40 dark:text-blue-200 dark:border-blue-500/30 text-xs font-semibold"
+                          >
+                            {sec}
+                            <button
+                              type="button"
+                              onClick={() => setNewClassSections(newClassSections.filter((s) => s !== sec))}
+                              className="text-zinc-400 hover:text-red-500 ml-0.5 cursor-pointer"
+                            >
+                              <X className="size-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Add custom section */}
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          placeholder="Add custom section (e.g. Section Red)"
+                          value={customSectionInput}
+                          onChange={(e) => setCustomSectionInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const trimmed = customSectionInput.trim();
+                              if (trimmed && !newClassSections.includes(trimmed)) {
+                                setNewClassSections([...newClassSections, trimmed]);
+                                setCustomSectionInput("");
+                              }
+                            }
+                          }}
+                          className="h-8 text-xs"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            const trimmed = customSectionInput.trim();
+                            if (trimmed && !newClassSections.includes(trimmed)) {
+                              setNewClassSections([...newClassSections, trimmed]);
+                              setCustomSectionInput("");
+                            }
+                          }}
+                          className="h-8 px-2.5 text-xs font-semibold shrink-0 cursor-pointer"
+                        >
+                          Add
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-100 dark:border-white/10">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setAddClassModalOpen(false)}
+                        className="h-9 px-4 rounded-xl text-xs"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        className="h-9 px-4 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        <Plus className="size-3.5" />
+                        <span>Create Class</span>
+                      </Button>
+                    </div>
+                  </form>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
+      {/* Edit Class Modal */}
+      {typeof document !== "undefined" &&
+        createPortal(
+          <AnimatePresence>
+            {editClassModalOpen && (
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                  onClick={() => setEditClassModalOpen(false)}
+                />
+
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.96, y: 12 }}
+                  transition={{ type: "spring", damping: 25, stiffness: 320 }}
+                  className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-900 flex flex-col"
+                >
+                  <div className="flex items-center justify-between border-b border-zinc-100 p-4 dark:border-white/10 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                        <Pencil className="size-4" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
+                          Edit Class & Categorization
+                        </h3>
+                        <p className="text-[11px] text-zinc-500">
+                          Rename class or move to another wing
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditClassModalOpen(false)}
+                      className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-white/15 dark:hover:text-zinc-100 transition-colors cursor-pointer"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleUpdateClass} className="p-4 space-y-4 text-xs">
+                    {/* Class Name */}
+                    <div className="space-y-1.5">
+                      <label className={formFieldLabelClass}>Class Name *</label>
+                      <Input
+                        required
+                        value={editingClassName}
+                        onChange={(e) => setEditingClassName(e.target.value)}
+                        className="text-xs h-9"
+                        autoFocus
+                      />
+                    </div>
+
+                    {/* Wing Categorization Dropdown */}
+                    <div className="space-y-1.5">
+                      <label className={formFieldLabelClass}>Wing Category *</label>
+                      <AppSelect
+                        value={editingClassWingId}
+                        onChange={setEditingClassWingId}
+                        placeholder="Select Wing Category..."
+                        options={config.wings.map((w) => ({
+                          value: w.id,
+                          label: w.name,
+                          sublabel: w.description,
+                        }))}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-100 dark:border-white/10">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setEditClassModalOpen(false)}
+                        className="h-9 px-4 rounded-xl text-xs"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        className="h-9 px-4 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        <CheckCircle2 className="size-3.5" />
+                        <span>Save Changes</span>
+                      </Button>
+                    </div>
+                  </form>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
+      {/* Delete Class Confirmation Modal */}
+      <DangerConfirmModal
+        open={Boolean(deleteClassTarget)}
+        onClose={() => setDeleteClassTarget(null)}
+        onConfirm={handleDeleteClass}
+        title="Delete Class"
+        subtitle={`Permanently remove ${deleteClassTarget?.className}`}
+        description={
+          <span>
+            Are you sure you want to delete <strong className="text-white font-bold">{deleteClassTarget?.className}</strong>?
+            This will remove it from <strong>{deleteClassTarget?.wingName}</strong> and erase its {deleteClassTarget?.sectionCount} configured section(s).
+          </span>
+        }
+        confirmText="Delete Class"
         cancelText="Cancel"
         variant="danger"
       />

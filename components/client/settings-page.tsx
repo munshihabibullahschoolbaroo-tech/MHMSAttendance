@@ -12,7 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { getFirebaseAuth } from "@/lib/firebase/client";
-import { nameToInitials } from "@/lib/profile/initials";
+import { UserAvatar } from "@/components/client/user-avatar";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
 import { cn } from "@/lib/utils";
 import { SettingsProfileEditor } from "@/components/client/settings-profile-editor";
@@ -72,7 +72,7 @@ export function SettingsPage() {
     label: string;
     icon: React.ComponentType<{ className?: string }>;
   }[] = [
-    { id: "campus", label: "Campus Geofence", icon: MapPin },
+    { id: "campus", label: "Campus & Attendance Timing", icon: MapPin },
     { id: "sections", label: "Classes & Sections", icon: Layers },
     { id: "wings", label: "Wings & Roles", icon: Building2 },
     { id: "profile", label: "Profile & Account", icon: UserIcon },
@@ -138,7 +138,7 @@ export function SettingsPage() {
             <CardContent>
               {loading ? (
                 <div className="flex flex-wrap items-center gap-4" aria-hidden>
-                  <Skeleton className="size-16 shrink-0 rounded-2xl sm:size-[4.5rem]" />
+                  <Skeleton className="size-16 shrink-0 rounded-full sm:size-[4.5rem]" />
                   <div className="min-w-0 flex-1 space-y-2">
                     <Skeleton className="h-5 w-40" />
                     <Skeleton className="h-4 w-56" />
@@ -147,14 +147,12 @@ export function SettingsPage() {
                 </div>
               ) : user ? (
                 <div className="flex flex-wrap items-center gap-4 sm:gap-6">
-                  <span
-                    className={cn(
-                      "flex size-16 shrink-0 items-center justify-center rounded-2xl sm:size-[4.5rem]",
-                      "bg-gradient-to-br from-violet-600 to-cyan-500 text-xl font-semibold text-white"
-                    )}
-                  >
-                    {nameToInitials(user.name)}
-                  </span>
+                  <UserAvatar
+                    name={user.name}
+                    photoUrl={user.photoUrl}
+                    className="size-16 shrink-0 sm:size-[4.5rem] ring-2 ring-zinc-200/80 dark:ring-white/10"
+                    textClassName="text-xl font-semibold"
+                  />
                   <div className="min-w-0 flex-1 space-y-0.5">
                     <p className="truncate text-lg font-medium text-zinc-900 dark:text-zinc-50">
                       {user.name}

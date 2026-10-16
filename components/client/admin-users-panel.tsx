@@ -5,7 +5,20 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { Search, Trash2, X, AlertCircle, GraduationCap, CheckCircle2, FileCheck, Bell, Loader2 } from "lucide-react";
+import {
+  Search,
+  Trash2,
+  X,
+  AlertCircle,
+  GraduationCap,
+  CheckCircle2,
+  FileCheck,
+  Bell,
+  Loader2,
+  Users,
+  School,
+  Sparkles,
+} from "lucide-react";
 import { AttendanceCalendar } from "@/components/client/attendance-calendar";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +37,95 @@ import { Input } from "@/components/ui/input";
 import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
 
 const TABLE_PAGE_SIZE = 15;
+
+export type WingTab = "all" | "higher" | "lower" | "rewa_na_kasco";
+
+export const WING_TABS: {
+  key: WingTab;
+  label: string;
+  badgeLabel?: string;
+  icon: React.ComponentType<{ className?: string }>;
+  description: string;
+}[] = [
+  {
+    key: "all",
+    label: "All Members",
+    icon: Users,
+    description: "All registered teachers and staff members",
+  },
+  {
+    key: "higher",
+    label: "Higher",
+    badgeLabel: "1st–12th",
+    icon: GraduationCap,
+    description: "Higher School Wing (Classes 1st to 12th)",
+  },
+  {
+    key: "lower",
+    label: "Lower",
+    badgeLabel: "Pre-Nur–UKG",
+    icon: School,
+    description: "Lower School Wing (Pre-Nursery to UKG)",
+  },
+  {
+    key: "rewa_na_kasco",
+    label: "Rewa na Kasco",
+    badgeLabel: "Special Wing",
+    icon: Sparkles,
+    description: "Rewa na Kasco / Khasko Special & Vocational Wing",
+  },
+];
+
+export function getUserWing(u: {
+  schoolWingId?: string | null;
+  schoolClassId?: string | null;
+  designation?: string | null;
+  position?: string | null;
+}): "higher" | "lower" | "rewa_na_kasco" | null {
+  const raw = (u.schoolWingId || "").trim().toLowerCase();
+  if (raw === "higher" || raw.includes("higher")) return "higher";
+  if (raw === "lower" || raw.includes("lower")) return "lower";
+  if (
+    raw === "rewa_na_kasco" ||
+    raw === "rewa na kasco" ||
+    raw.includes("rewa") ||
+    raw.includes("kasco") ||
+    raw.includes("khasko")
+  ) {
+    return "rewa_na_kasco";
+  }
+
+  // Fallback heuristic based on class id
+  const cid = (u.schoolClassId || "").trim().toLowerCase();
+  if (cid) {
+    if (["pre-nursery", "nursery", "lkg", "ukg"].some((k) => cid.includes(k))) return "lower";
+    if (cid.includes("class") || cid.includes("grade") || cid.match(/\b([1-9]|1[0-2])\b/)) return "higher";
+    if (cid.includes("vocational") || cid.includes("rewa")) return "rewa_na_kasco";
+  }
+
+  // Fallback heuristic based on designation/position
+  const desig = `${u.designation || ""} ${u.position || ""}`.toLowerCase();
+  if (
+    desig.includes("ntt") ||
+    desig.includes("nursery") ||
+    desig.includes("kindergarten") ||
+    desig.includes("pre-primary")
+  ) {
+    return "lower";
+  }
+  if (desig.includes("pgt") || desig.includes("tgt") || desig.includes("lecturer")) return "higher";
+  if (
+    desig.includes("rewa") ||
+    desig.includes("kasco") ||
+    desig.includes("khasko") ||
+    desig.includes("vocational") ||
+    desig.includes("handicraft")
+  ) {
+    return "rewa_na_kasco";
+  }
+
+  return null;
+}
 
 type Row = {
   id: string;
@@ -81,16 +183,14 @@ export function AdminUsersPanel() {
   const [users, setUsers] = React.useState<Row[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState<string | null>(null);
-  const [resetEmail, setResetEmail] = React.useState("");
-  const [resetLink, setResetLink] = React.useState<string | null>(null);
-  const [resetBusy, setResetBusy] = React.useState(false);
-  const [resetMsg, setResetMsg] = React.useState<string | null>(null);
+  const [deleteError, setDeleteError] = React.useState<string | null>(null);
   const [assignWorker, setAssignWorker] = React.useState<Row | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<Row | null>(null);
   const [bulkDeleteTargets, setBulkDeleteTargets] = React.useState<Row[] | null>(null);
   const [deletePhrase, setDeletePhrase] = React.useState("");
   const [deleteBusy, setDeleteBusy] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
+  const [activeWingTab, setActiveWingTab] = React.useState<WingTab>("all");
   const [selectedEmployeeIds, setSelectedEmployeeIds] = React.useState<string[]>([]);
   const [page, setPage] = React.useState(1);
   const [archiveBusy, setArchiveBusy] = React.useState(false);
@@ -238,14 +338,46 @@ export function AdminUsersPanel() {
     setCalendarOpen(true);
   };
 
+  const wingCounts = React.useMemo(() => {
+    let higher = 0;
+    let lower = 0;
+    let rewa = 0;
+    for (const u of users) {
+      const w = getUserWing(u);
+      if (w === "higher") higher++;
+      else if (w === "lower") lower++;
+      else if (w === "rewa_na_kasco") rewa++;
+    }
+    return {
+      all: users.length,
+      higher,
+      lower,
+      rewa_na_kasco: rewa,
+    };
+  }, [users]);
+
   const filteredUsers = React.useMemo(() => {
+    let list = users;
+    if (activeWingTab !== "all") {
+      list = list.filter((u) => getUserWing(u) === activeWingTab);
+    }
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((r) => {
-      const fields = [r.name, r.email, r.role, r.id, r.employeeId ?? ""];
+    if (!q) return list;
+    return list.filter((r) => {
+      const fields = [
+        r.name,
+        r.email,
+        r.role,
+        r.id,
+        r.employeeId ?? "",
+        r.designation ?? "",
+        r.position ?? "",
+        r.schoolWingId ?? "",
+        r.schoolClassId ?? "",
+      ];
       return fields.some((f) => (typeof f === "string" ? f : "").toLowerCase().includes(q));
     });
-  }, [users, searchQuery]);
+  }, [users, activeWingTab, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredUsers.length / TABLE_PAGE_SIZE));
   const paginatedUsers = React.useMemo(
@@ -255,7 +387,8 @@ export function AdminUsersPanel() {
 
   React.useEffect(() => {
     setPage(1);
-  }, [searchQuery]);
+    setSelectedEmployeeIds([]);
+  }, [searchQuery, activeWingTab]);
 
   React.useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -286,39 +419,6 @@ export function AdminUsersPanel() {
     }
   };
 
-  const requestResetLink = async () => {
-    setResetMsg(null);
-    setResetLink(null);
-    const email = resetEmail.trim().toLowerCase();
-    if (!email) {
-      setResetMsg("Enter user email.");
-      return;
-    }
-    setResetBusy(true);
-    try {
-      const auth = getFirebaseAuth();
-      const u = auth.currentUser;
-      if (!u) throw new Error("Not signed in");
-      const token = await u.getIdToken();
-      const res = await fetch("/api/admin/password-reset-link", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email }),
-      });
-      const data = (await res.json()) as { resetLink?: string; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Failed");
-      setResetLink(data.resetLink ?? null);
-      setResetMsg("Copy the link and send it to the user securely (not over public chat).");
-    } catch (e) {
-      setResetMsg(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setResetBusy(false);
-    }
-  };
-
   const canManageAdmins = viewer?.role === "super_admin";
   const canDeleteUsers = viewer?.role === "admin" || viewer?.role === "super_admin";
 
@@ -328,7 +428,6 @@ export function AdminUsersPanel() {
   const confirmDemoteAdmin = async () => {
     if (!demoteTarget) return;
     setDemoting(true);
-    setResetMsg(null);
     try {
       const auth = getFirebaseAuth();
       const u = auth.currentUser;
@@ -344,10 +443,11 @@ export function AdminUsersPanel() {
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to demote admin");
+      toast.success("Admin privileges removed");
       await load();
       setDemoteTarget(null);
     } catch (e) {
-      setResetMsg(e instanceof Error ? e.message : "Failed");
+      toast.error(e instanceof Error ? e.message : "Failed to demote admin");
     } finally {
       setDemoting(false);
     }
@@ -372,21 +472,25 @@ export function AdminUsersPanel() {
 
   const deleteUser = async () => {
     if (!deleteTarget) return;
-    if (deletePhrase.trim() !== "DELETE EMPLOYEE") {
-      setResetMsg("Type exactly: DELETE EMPLOYEE");
+    if (deletePhrase.trim().toUpperCase() !== "DELETE EMPLOYEE") {
+      setDeleteError("Please type exactly: DELETE EMPLOYEE");
       return;
     }
     setDeleteBusy(true);
-    setResetMsg(null);
+    setDeleteError(null);
     try {
       const uid = deleteTarget.id;
+      const targetName = deleteTarget.name || deleteTarget.email;
       await deleteEmployeeRequest(uid);
       setDeleteTarget(null);
       setDeletePhrase("");
       setSelectedEmployeeIds((prev) => prev.filter((id) => id !== uid));
+      toast.success(`Deleted ${targetName}. All records and credentials purged.`);
       await load();
     } catch (e) {
-      setResetMsg(e instanceof Error ? e.message : "Failed");
+      const msg = e instanceof Error ? e.message : "Failed to delete employee";
+      setDeleteError(msg);
+      toast.error(msg);
     } finally {
       setDeleteBusy(false);
     }
@@ -394,13 +498,14 @@ export function AdminUsersPanel() {
 
   const deleteBulkEmployees = async () => {
     if (!bulkDeleteTargets?.length) return;
-    if (deletePhrase.trim() !== "DELETE EMPLOYEE") {
-      setResetMsg("Type exactly: DELETE EMPLOYEE");
+    if (deletePhrase.trim().toUpperCase() !== "DELETE EMPLOYEE") {
+      setDeleteError("Please type exactly: DELETE EMPLOYEE");
       return;
     }
     setDeleteBusy(true);
-    setResetMsg(null);
+    setDeleteError(null);
     try {
+      const count = bulkDeleteTargets.length;
       for (const row of bulkDeleteTargets) {
         await deleteEmployeeRequest(row.id);
       }
@@ -408,16 +513,18 @@ export function AdminUsersPanel() {
       setSelectedEmployeeIds((prev) => prev.filter((id) => !removed.has(id)));
       setBulkDeleteTargets(null);
       setDeletePhrase("");
+      toast.success(`Successfully purged ${count} employees and all associated records.`);
       await load();
     } catch (e) {
-      setResetMsg(e instanceof Error ? e.message : "Failed");
+      const msg = e instanceof Error ? e.message : "Failed to delete some employees";
+      setDeleteError(msg);
+      toast.error(msg);
     } finally {
       setDeleteBusy(false);
     }
   };
 
   const downloadWorkersArchive = async () => {
-    setResetMsg(null);
     setArchiveBusy(true);
     try {
       const auth = getFirebaseAuth();
@@ -441,7 +548,7 @@ export function AdminUsersPanel() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setResetMsg(e instanceof Error ? e.message : "Failed to download archive");
+      toast.error(e instanceof Error ? e.message : "Failed to download archive");
     } finally {
       setArchiveBusy(false);
     }
@@ -955,26 +1062,35 @@ export function AdminUsersPanel() {
                   if (deleteBusy) return;
                   setDeleteTarget(null);
                   setDeletePhrase("");
+                  setDeleteError(null);
                 }}
               />
               <Card className="relative z-[1] w-full max-w-lg border-red-500/30 bg-zinc-950 text-zinc-100">
                 <CardHeader>
-                  <CardTitle className="text-red-400">Danger zone</CardTitle>
+                  <CardTitle className="text-red-400">Danger: Permanent Employee Deletion</CardTitle>
                   <CardDescription className="text-zinc-400">
-                    Delete <strong>{deleteTarget.name || deleteTarget.id}</strong> permanently. This will
-                    remove profile, attendance, overtime/off-site history, notifications, live tracking,
-                    and Firebase auth account.
+                    Permanently delete <strong>{deleteTarget.name || deleteTarget.id}</strong> ({deleteTarget.email}).
+                    This will permanently purge their profile, attendance, leaves, class allocations, live tracking, and Firebase auth account.
+                    If they sign in again, they will be required to start onboarding from the beginning.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {deleteError ? (
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-400">
+                      {deleteError}
+                    </div>
+                  ) : null}
                   <label className="block text-sm">
                     <span className="mb-1 block text-zinc-400">
                       Type <strong className="text-zinc-100">DELETE EMPLOYEE</strong> to confirm
                     </span>
                     <input
                       value={deletePhrase}
-                      onChange={(e) => setDeletePhrase(e.target.value)}
-                      className="w-full rounded-xl border border-red-500/30 bg-zinc-900 px-3 py-2 font-mono text-sm"
+                      onChange={(e) => {
+                        setDeletePhrase(e.target.value);
+                        if (deleteError) setDeleteError(null);
+                      }}
+                      className="w-full rounded-xl border border-red-500/30 bg-zinc-900 px-3 py-2 font-mono text-sm uppercase placeholder:normal-case"
                       placeholder="DELETE EMPLOYEE"
                       disabled={deleteBusy}
                     />
@@ -987,12 +1103,13 @@ export function AdminUsersPanel() {
                       onClick={() => {
                         setDeleteTarget(null);
                         setDeletePhrase("");
+                        setDeleteError(null);
                       }}
                     >
                       Cancel
                     </Button>
                     <Button type="button" variant="destructive" disabled={deleteBusy} onClick={() => void deleteUser()}>
-                      {deleteBusy ? "Deleting..." : "Delete employee"}
+                      {deleteBusy ? "Deleting..." : "Permanently Delete"}
                     </Button>
                   </div>
                 </CardContent>
@@ -1013,17 +1130,22 @@ export function AdminUsersPanel() {
                   if (deleteBusy) return;
                   setBulkDeleteTargets(null);
                   setDeletePhrase("");
+                  setDeleteError(null);
                 }}
               />
               <Card className="relative z-[1] w-full max-w-lg border-red-500/30 bg-zinc-950 text-zinc-100">
                 <CardHeader>
                   <CardTitle className="text-red-400">Delete {bulkDeleteTargets.length} employees</CardTitle>
                   <CardDescription className="text-zinc-400">
-                    This will permanently remove each selected worker&apos;s profile, attendance,
-                    overtime/off-site history, notifications, live tracking, and Firebase auth account.
+                    Permanently wipe profile, attendance, leaves, class allocations, live tracking, and authentication for all selected employees. They will need to onboard afresh if they sign in again.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {deleteError ? (
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-400">
+                      {deleteError}
+                    </div>
+                  ) : null}
                   <ul className="max-h-36 list-inside list-disc overflow-y-auto text-sm text-zinc-300">
                     {bulkDeleteTargets.slice(0, 15).map((r) => (
                       <li key={r.id}>
@@ -1040,8 +1162,11 @@ export function AdminUsersPanel() {
                     </span>
                     <input
                       value={deletePhrase}
-                      onChange={(e) => setDeletePhrase(e.target.value)}
-                      className="w-full rounded-xl border border-red-500/30 bg-zinc-900 px-3 py-2 font-mono text-sm"
+                      onChange={(e) => {
+                        setDeletePhrase(e.target.value);
+                        if (deleteError) setDeleteError(null);
+                      }}
+                      className="w-full rounded-xl border border-red-500/30 bg-zinc-900 px-3 py-2 font-mono text-sm uppercase placeholder:normal-case"
                       placeholder="DELETE EMPLOYEE"
                       disabled={deleteBusy}
                     />
@@ -1054,6 +1179,7 @@ export function AdminUsersPanel() {
                       onClick={() => {
                         setBulkDeleteTargets(null);
                         setDeletePhrase("");
+                        setDeleteError(null);
                       }}
                     >
                       Cancel
@@ -1163,6 +1289,55 @@ export function AdminUsersPanel() {
                 </div>
               )}
 
+              {/* 4 Wing / Department Category Tabs */}
+              <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3 pt-1">
+                {WING_TABS.map((tab) => {
+                  const isActive = activeWingTab === tab.key;
+                  const count = wingCounts[tab.key];
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => {
+                        setActiveWingTab(tab.key);
+                        setSelectedEmployeeIds([]);
+                      }}
+                      title={tab.description}
+                      className={cn(
+                        "group relative inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all cursor-pointer",
+                        isActive
+                          ? "bg-white/10 text-white border border-white/20 shadow-xs shadow-black/20"
+                          : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] border border-transparent"
+                      )}
+                    >
+                      <Icon
+                        className={cn(
+                          "size-3.5 transition-colors",
+                          isActive ? "text-cyan-400" : "text-zinc-500 group-hover:text-zinc-300"
+                        )}
+                      />
+                      <span>{tab.label}</span>
+                      {tab.badgeLabel && (
+                        <span className="hidden sm:inline text-[10px] font-normal text-zinc-500">
+                          ({tab.badgeLabel})
+                        </span>
+                      )}
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[11px] tabular-nums font-bold leading-none transition-colors",
+                          isActive
+                            ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30"
+                            : "bg-white/[0.08] text-zinc-400 group-hover:bg-white/[0.12] group-hover:text-zinc-200"
+                        )}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="relative max-w-md flex-1">
                   <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
@@ -1189,7 +1364,7 @@ export function AdminUsersPanel() {
                         if (rows.length === 0) return;
                         setBulkDeleteTargets(rows);
                         setDeletePhrase("");
-                        setResetMsg(null);
+                        setDeleteError(null);
                       }}
                     >
                       <Trash2 className="mr-1.5 size-4" />
@@ -1211,7 +1386,29 @@ export function AdminUsersPanel() {
               {users.length === 0 ? (
                 <p className="text-sm text-zinc-500">No users found.</p>
               ) : filteredUsers.length === 0 ? (
-                <p className="text-sm text-zinc-500">No users match your search.</p>
+                <div className="p-8 text-center rounded-xl border border-dashed border-white/10">
+                  <p className="text-sm font-medium text-zinc-300">
+                    {searchQuery
+                      ? `No staff match "${searchQuery}" in ${WING_TABS.find((t) => t.key === activeWingTab)?.label}.`
+                      : `No staff members found in ${WING_TABS.find((t) => t.key === activeWingTab)?.label}.`}
+                  </p>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    {activeWingTab !== "all"
+                      ? "Switch to \"All Members\" or check another tab to view other staff."
+                      : "Try adjusting your search criteria."}
+                  </p>
+                  {activeWingTab !== "all" && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setActiveWingTab("all")}
+                      className="mt-3 text-xs"
+                    >
+                      View All Members ({wingCounts.all})
+                    </Button>
+                  )}
+                </div>
               ) : (
             <div className="overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[720px] border-collapse text-left text-sm tabular-nums">
@@ -1279,11 +1476,15 @@ export function AdminUsersPanel() {
                         <div className="font-semibold text-zinc-200">
                           {r.designation || r.position || r.role}
                         </div>
-                        {r.schoolWingId && (
+                        {r.schoolWingId ? (
                           <div className="text-[10px] text-zinc-500 uppercase tracking-wider">
                             {r.schoolWingId.replace(/_/g, " ")}
                           </div>
-                        )}
+                        ) : getUserWing(r) ? (
+                          <div className="text-[10px] text-zinc-500/80 uppercase tracking-wider">
+                            {getUserWing(r)?.replace(/_/g, " ")}
+                          </div>
+                        ) : null}
                       </td>
                       {canManageAdmins ? (
                         <td className="px-3 py-2">
@@ -1393,7 +1594,7 @@ export function AdminUsersPanel() {
                                 e.stopPropagation();
                                 setDeleteTarget(r);
                                 setDeletePhrase("");
-                                setResetMsg(null);
+                                setDeleteError(null);
                               }}
                             >
                               Delete
@@ -1448,40 +1649,6 @@ export function AdminUsersPanel() {
             </>
           )}
 
-          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-            <p className="text-sm font-medium text-zinc-200">Password reset link</p>
-            <p className="mt-1 text-xs text-zinc-500">
-              Passwords cannot be viewed or stored in plain text. Send this link only through a
-              private channel.
-            </p>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-              <input
-                type="email"
-                placeholder="user@example.com"
-                className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm"
-                value={resetEmail}
-                onChange={(e) => setResetEmail(e.target.value)}
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={resetBusy}
-                onClick={() => void requestResetLink()}
-              >
-                {resetBusy ? "…" : "Generate link"}
-              </Button>
-            </div>
-            {resetMsg ? <p className="mt-2 text-sm text-zinc-400">{resetMsg}</p> : null}
-            {resetLink ? (
-              <textarea
-                readOnly
-                className="mt-2 w-full rounded-xl border border-white/10 bg-black/60 p-3 font-mono text-xs text-zinc-300"
-                rows={3}
-                value={resetLink}
-                onFocus={(e) => e.target.select()}
-              />
-            ) : null}
-          </div>
         </CardContent>
       </Card>
 

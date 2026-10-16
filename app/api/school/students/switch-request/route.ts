@@ -118,6 +118,27 @@ export async function POST(req: Request) {
     return jsonError("You are already assigned as the primary teacher for this class & section.", 400);
   }
 
+  // Verify that requestedClass & requestedSection are not already assigned to another teacher
+  const allUsersSnap = await db.collection("users").get();
+  const existingTeacher = allUsersSnap.docs.find((d) => {
+    if (d.id === auth.decoded.uid) return false;
+    const isClassTeacher = d.get("isClassTeacher") === true;
+    const c = d.get("schoolClassId");
+    const s = d.get("schoolSectionId");
+    if (!isClassTeacher || typeof c !== "string") return false;
+    const rawExisting = typeof s === "string" ? s : "Section A";
+    const normReq = requestedSection.replace(/^section\s+/i, "").trim().toLowerCase();
+    const normExisting = rawExisting.replace(/^section\s+/i, "").trim().toLowerCase();
+    return c === requestedClass && normExisting === normReq;
+  });
+
+  if (existingTeacher) {
+    return jsonError(
+      `${requestedClass} (${requestedSection}) is already assigned to ${existingTeacher.get("name") || "another teacher"}. You can only request switches to unassigned classes and sections.`,
+      400
+    );
+  }
+
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const targetDate = date || todayStr;

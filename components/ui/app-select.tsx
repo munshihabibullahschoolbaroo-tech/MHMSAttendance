@@ -52,7 +52,16 @@ export function AppSelect({
   const [query, setQuery] = React.useState("");
 
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const popoverRef = React.useRef<HTMLDivElement>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  const [popoverCoords, setPopoverCoords] = React.useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  }>({ left: 0, width: 240, maxHeight: 400 });
 
   // Normalize options to SelectOption objects
   const normalizedOptions: SelectOption[] = React.useMemo(() => {
@@ -76,6 +85,49 @@ export function AppSelect({
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
+  const updatePosition = React.useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const vw = window.innerWidth;
+    const spaceBelow = vh - rect.bottom - 16;
+    const spaceAbove = rect.top - 16;
+    const openUpward = spaceBelow < 260 && spaceAbove > spaceBelow;
+
+    const width = rect.width;
+    const left = Math.max(8, Math.min(rect.left, vw - width - 8));
+
+    if (openUpward) {
+      setPopoverCoords({
+        bottom: vh - rect.top + 6,
+        left,
+        width,
+        maxHeight: Math.min(spaceAbove, 600),
+      });
+    } else {
+      setPopoverCoords({
+        top: rect.bottom + 6,
+        left,
+        width,
+        maxHeight: Math.min(spaceBelow, 600),
+      });
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!isOpen || isMobile) return;
+    updatePosition();
+    const handleScrollOrResize = () => {
+      updatePosition();
+    };
+    window.addEventListener("resize", handleScrollOrResize);
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    return () => {
+      window.removeEventListener("resize", handleScrollOrResize);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+    };
+  }, [isOpen, isMobile, updatePosition]);
+
   // Filtered options based on search query
   const filteredOptions = React.useMemo(() => {
     if (!query.trim()) return normalizedOptions;
@@ -94,10 +146,10 @@ export function AppSelect({
     if (!isOpen) {
       setQuery("");
     } else {
-      // Focus search if opened
+      // Focus search if opened with preventScroll so it never scrolls parent page/card
       setTimeout(() => {
-        searchInputRef.current?.focus();
-      }, 100);
+        searchInputRef.current?.focus({ preventScroll: true });
+      }, 50);
     }
   }, [isOpen]);
 
@@ -105,7 +157,13 @@ export function AppSelect({
   React.useEffect(() => {
     if (!isOpen || isMobile) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        popoverRef.current &&
+        !popoverRef.current.contains(target)
+      ) {
         setIsOpen(false);
       }
     };
@@ -118,7 +176,7 @@ export function AppSelect({
     setIsOpen(false);
   };
 
-  const isAutoSearchable = searchable || normalizedOptions.length > 7;
+  const isAutoSearchable = searchable || normalizedOptions.length > 12;
 
   return (
     <div ref={containerRef} className="relative inline-block w-full">
@@ -151,92 +209,120 @@ export function AppSelect({
         />
       </button>
 
-      {/* DESKTOP POPOVER (screen width >= 640px) */}
-      {!isMobile && isOpen && (
-        <div
-          className={cn(
-            "absolute z-[100] mt-1.5 w-full min-w-[200px] max-w-sm rounded-2xl border border-zinc-200/90 bg-white p-1.5 shadow-2xl dark:border-white/10 dark:bg-zinc-950 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md",
-            align === "right" ? "right-0" : "left-0"
-          )}
-        >
-          {/* Search bar inside desktop popover if searchable */}
-          {isAutoSearchable && (
-            <div className="p-1 pb-1.5 border-b border-zinc-100 dark:border-white/10 mb-1">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={searchPlaceholder}
-                  className="w-full h-8 pl-8 pr-7 text-xs rounded-lg border border-zinc-200 bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 outline-none focus:ring-1 focus:ring-blue-500"
-                />
-                {query && (
-                  <button
-                    type="button"
-                    onClick={() => setQuery("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-                  >
-                    <X className="size-3" />
-                  </button>
-                )}
+      {/* DESKTOP POPOVER (screen width >= 640px) portaled to document.body */}
+      {!isMobile &&
+        isOpen &&
+        mounted &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            style={{
+              position: "fixed",
+              top: popoverCoords.top !== undefined ? `${popoverCoords.top}px` : undefined,
+              bottom: popoverCoords.bottom !== undefined ? `${popoverCoords.bottom}px` : undefined,
+              left: `${popoverCoords.left}px`,
+              width: `${popoverCoords.width}px`,
+              zIndex: 100100,
+            }}
+            className={cn(
+              "z-[100100] rounded-2xl border border-zinc-200/90 bg-white p-1.5 shadow-2xl dark:border-white/10 dark:bg-zinc-950 backdrop-blur-md animate-in fade-in zoom-in-95 duration-150"
+            )}
+          >
+            {/* Search bar inside desktop popover if searchable */}
+            {isAutoSearchable && (
+              <div className="p-1 pb-1.5 border-b border-zinc-100 dark:border-white/10 mb-1">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={searchPlaceholder}
+                    className="w-full h-8 pl-8 pr-7 text-xs rounded-lg border border-zinc-200 bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  {query && (
+                    <button
+                      type="button"
+                      onClick={() => setQuery("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Options List */}
-          <div className="max-h-60 overflow-y-auto space-y-0.5 p-0.5 custom-scrollbar">
-            {filteredOptions.length === 0 ? (
-              <div className="py-4 text-center text-xs text-zinc-400">No matching options</div>
-            ) : (
-              filteredOptions.map((opt) => {
-                const isSelected = opt.value === value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    disabled={opt.disabled}
-                    onClick={() => handleSelect(opt.value)}
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-xl px-2.5 py-2 text-xs font-semibold text-left transition-colors cursor-pointer",
-                      opt.disabled && "opacity-40 cursor-not-allowed",
-                      isSelected
-                        ? "bg-blue-600 text-white font-bold shadow-xs"
-                        : "text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/10"
-                    )}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate">{opt.label}</div>
-                      {opt.sublabel && (
-                        <div
+            {/* Options List: when options <= 15, NO SCROLLING! Fully displayed with zero clipping */}
+            <div
+              style={{
+                maxHeight:
+                  filteredOptions.length <= 15
+                    ? undefined
+                    : `${Math.max(160, popoverCoords.maxHeight - (isAutoSearchable ? 54 : 18))}px`,
+              }}
+              className={cn(
+                "space-y-0.5 p-0.5 custom-scrollbar",
+                filteredOptions.length <= 15
+                  ? "max-h-none overflow-y-visible"
+                  : "overflow-y-auto"
+              )}
+            >
+              {filteredOptions.length === 0 ? (
+                <div className="py-4 text-center text-xs text-zinc-400">No matching options</div>
+              ) : (
+                filteredOptions.map((opt) => {
+                  const isSelected = opt.value === value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      disabled={opt.disabled}
+                      onClick={() => handleSelect(opt.value)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-xl px-2.5 py-2 text-xs font-semibold text-left transition-colors cursor-pointer",
+                        opt.disabled && "opacity-40 cursor-not-allowed",
+                        isSelected
+                          ? "bg-blue-600 text-white font-bold shadow-xs"
+                          : "text-zinc-800 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/10"
+                      )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate">{opt.label}</div>
+                        {opt.sublabel && (
+                          <div
+                            className={cn(
+                              "text-[10px] font-normal truncate mt-0.5",
+                              isSelected ? "text-blue-100" : "text-zinc-400"
+                            )}
+                          >
+                            {opt.sublabel}
+                          </div>
+                        )}
+                      </div>
+                      {opt.badge && (
+                        <span
                           className={cn(
-                            "text-[10px] font-normal truncate mt-0.5",
-                            isSelected ? "text-blue-100" : "text-zinc-400"
+                            "rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
+                            isSelected
+                              ? "bg-white/20 text-white"
+                              : "bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-zinc-400"
                           )}
                         >
-                          {opt.sublabel}
-                        </div>
+                          {opt.badge}
+                        </span>
                       )}
-                    </div>
-                    {opt.badge && (
-                      <span
-                        className={cn(
-                          "rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                          isSelected ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-zinc-400"
-                        )}
-                      >
-                        {opt.badge}
-                      </span>
-                    )}
-                    {isSelected && <Check className="size-3.5 shrink-0 ml-1 text-white" />}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
+                      {isSelected && <Check className="size-3.5 shrink-0 ml-1 text-white" />}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* MOBILE BOTTOM SHEET DRAWER (screen width < 640px) */}
       {isMobile &&
@@ -244,7 +330,7 @@ export function AppSelect({
         createPortal(
           <AnimatePresence>
             {isOpen && (
-              <div className="fixed inset-0 z-[10050] flex flex-col justify-end">
+              <div className="fixed inset-0 z-[100500] flex flex-col justify-end">
                 {/* Backdrop */}
                 <motion.div
                   initial={{ opacity: 0 }}

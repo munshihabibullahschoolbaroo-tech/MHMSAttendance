@@ -91,6 +91,21 @@ export async function POST(req: Request) {
         { merge: true }
       );
 
+      if (data.teacherId && (data.isEmergencyDeparture || data.type === "emergency" || data.type === "on_duty")) {
+        const dateKey = data.startDate ? String(data.startDate) : "";
+        if (dateKey) {
+          const sessRef = db.collection("teacherSessions").doc(`${data.teacherId}_${dateKey}`);
+          batch.set(
+            sessRef,
+            {
+              "emergencyLeave.status": status,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      }
+
       if (data.teacherId) {
         teachersToNotify.push({
           teacherId: String(data.teacherId),

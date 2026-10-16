@@ -20,8 +20,13 @@ export function OnboardingGate({ children }: { children: React.ReactNode }) {
     if (!needsOnboarding && onOnboardingPage) {
       if (user.role === "admin" || user.role === "super_admin") {
         router.replace("/dashboard/admin");
+      } else if (
+        user.workspaceAccessStatus === "pending" ||
+        user.workspaceAccessStatus === "rejected"
+      ) {
+        router.replace("/dashboard/waiting-approval");
       } else {
-        router.replace("/dashboard/employee/check-in");
+        router.replace("/");
       }
     }
   }, [loading, pathname, router, user]);

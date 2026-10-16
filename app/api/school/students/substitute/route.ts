@@ -56,10 +56,11 @@ export async function GET(req: Request) {
   }
 
   const data = snap.data();
+  const isActive = data?.active === true;
   return NextResponse.json({
     ok: true,
-    active: data?.active === true,
-    delegation: data,
+    active: isActive,
+    delegation: isActive ? data : null,
   });
 }
 
@@ -99,6 +100,25 @@ export async function POST(req: Request) {
     return jsonError(
       `Only the appointed Class Teacher for ${classId} (${sectionId}) or administrators can delegate a substitute teacher.`,
       403
+    );
+  }
+
+  if (substituteTeacherId === auth.decoded.uid) {
+    return jsonError("You cannot assign yourself as substitute teacher.", 400);
+  }
+
+  // Prevent circular substitute loop: if the proposed substitute teacher has an active delegation to the caller
+  const reverseDelegationSnap = await db
+    .collection("classTeacherDelegations")
+    .where("permanentTeacherId", "==", substituteTeacherId)
+    .where("substituteTeacherId", "==", auth.decoded.uid)
+    .where("active", "==", true)
+    .get();
+
+  if (!reverseDelegationSnap.empty) {
+    return jsonError(
+      "This colleague has already designated you as their substitute class teacher. Circular substitute assignments are not allowed.",
+      400
     );
   }
 
@@ -198,14 +218,7 @@ export async function DELETE(req: Request) {
     return jsonError("Not authorized to revoke this delegation", 403);
   }
 
-  await db.collection("classTeacherDelegations").doc(docId).set(
-    {
-      active: false,
-      revokedAt: FieldValue.serverTimestamp(),
-      revokedBy: auth.decoded.uid,
-    },
-    { merge: true }
-  );
+  await db.collection("classTeacherDelegations").doc(docId).delete();
 
   return NextResponse.json({
     ok: true,

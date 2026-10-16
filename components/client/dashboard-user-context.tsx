@@ -11,6 +11,7 @@ export type DashboardUser = {
   name: string;
   email: string;
   role: string;
+  photoUrl?: string | null;
   designation?: string;
   employeeId?: string;
   /**
@@ -45,6 +46,8 @@ export type DashboardUser = {
   /** Whether the user has completed onboarding (true for existing staff/admins or completed setup) */
   onboarded?: boolean;
   onboardingCompletedAt?: string | null;
+  createdAt?: string | null;
+  firstLoginAt?: string | null;
 };
 
 import { getSuperAdminEmail } from "@/lib/constants";
@@ -84,6 +87,10 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
           const email = u.email;
           const data = snap.data();
           const name = (data?.name as string) || email?.split("@")[0] || "User";
+          const photoUrl =
+            (typeof data?.photoUrl === "string" && data.photoUrl ? data.photoUrl : null) ||
+            u.photoURL ||
+            null;
           let role = (data?.role as string) || "employee";
           const superEmail = getSuperAdminEmail();
           if (superEmail && email?.trim().toLowerCase() === superEmail) {
@@ -110,9 +117,19 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
           const wageRate = typeof data?.wageRate === "number" ? data.wageRate : undefined;
           const overtimeRate = typeof data?.overtimeRate === "number" ? data.overtimeRate : undefined;
 
+          // Sync email if needed
           if (email && snap.exists() && fsEmail !== email) {
             try {
               await updateDoc(userRef, { email });
+            } catch {
+              /* ignore sync errors */
+            }
+          }
+
+          // Sync Google Auth photo URL to Firestore doc if missing/updated
+          if (u.photoURL && snap.exists() && (!data?.photoUrl || data.photoUrl !== u.photoURL)) {
+            try {
+              await updateDoc(userRef, { photoUrl: u.photoURL });
             } catch {
               /* ignore sync errors */
             }
@@ -129,6 +146,7 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
             name,
             email: email ?? "",
             role,
+            photoUrl,
             designation,
             employeeId,
             workspaceAccessStatus,
@@ -158,6 +176,16 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
             onboardingCompletedAt: data?.onboardingCompletedAt
               ? String(data.onboardingCompletedAt)
               : null,
+            createdAt: data?.createdAt
+              ? typeof (data.createdAt as any).toDate === "function"
+                ? (data.createdAt as any).toDate().toISOString()
+                : String(data.createdAt)
+              : null,
+            firstLoginAt: data?.firstLoginAt
+              ? typeof (data.firstLoginAt as any).toDate === "function"
+                ? (data.firstLoginAt as any).toDate().toISOString()
+                : String(data.firstLoginAt)
+              : null,
           });
           setLoading(false);
         },
@@ -174,6 +202,7 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
                     u.email && u.email.trim().toLowerCase() === getSuperAdminEmail()
                       ? "super_admin"
                       : "employee",
+                  photoUrl: u.photoURL || null,
                   designation: "",
                   employeeId: "",
                   workspaceAccessStatus: undefined,

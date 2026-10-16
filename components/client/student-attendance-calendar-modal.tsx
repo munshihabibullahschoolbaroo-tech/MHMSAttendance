@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { downloadStudentMonthlyAttendancePdf } from "@/lib/school/attendance-pdf";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
+import { Separator } from "@/components/ui/separator";
 
 type Student = {
   id: string;
@@ -159,7 +160,7 @@ export function StudentAttendanceCalendarModal({
             presentDays: 0,
             absentDays: 0,
             lateDays: 0,
-            percent: 100,
+            percent: 0,
             history: {},
           });
         }
@@ -262,7 +263,7 @@ export function StudentAttendanceCalendarModal({
             </div>
 
             {/* Modal Header */}
-            <header className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-zinc-200/90 dark:border-white/10 bg-white/95 dark:bg-zinc-900/95 px-4 sm:px-6 py-3 sm:py-4 gap-3 shrink-0 pr-14">
+            <header className="flex flex-col sm:flex-row sm:items-center justify-between bg-white/95 dark:bg-zinc-900/95 px-4 sm:px-6 py-3 sm:py-4 gap-3 shrink-0 pr-14">
               <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0">
                 <span className="flex size-10 sm:size-12 shrink-0 items-center justify-center rounded-2xl bg-blue-600/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400 font-extrabold font-mono text-sm sm:text-base border border-blue-500/20 shadow-xs">
                   #{student.rollNo}
@@ -325,6 +326,7 @@ export function StudentAttendanceCalendarModal({
                 </div>
               </div>
             </header>
+            <Separator />
 
         {/* Modal Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">

@@ -138,7 +138,7 @@ export async function generateTeacherAttendancePdf({
       } else if (rem.includes("sunday") || rem.includes("holiday")) {
         status = "Sunday Off";
         mSunday++;
-      } else if (isFuture || rem.includes("unmarked")) {
+      } else if (isFuture || rem.includes("unmarked") || rem.includes("before")) {
         status = "Unmarked";
       } else if (rem.includes("absent") || (r.inTime === "—" && r.dutyHours === 0)) {
         status = "Absent";
@@ -350,13 +350,13 @@ export async function downloadStudentDailyAttendancePdf({
 
   doc.text(`Present: ${presentCount}`, marginX, y + 86);
   doc.text(`Absent: ${absentCount}`, marginX + 90, y + 86);
-  doc.text(`Late: ${lateCount}`, marginX + 175, y + 86);
+  doc.text(`Leave: ${lateCount}`, marginX + 175, y + 86);
   doc.text(`Unmarked: ${unmarkedCount}`, marginX + 250, y + 86);
   doc.text(`Attendance Rate: ${rate}%`, marginX + 370, y + 86);
 
   const tableRows = students.map((s, idx) => {
     const st = statusMap[s.id];
-    const statusText = st === "present" ? "PRESENT" : st === "absent" ? "ABSENT" : st === "late" ? "LATE" : "UNMARKED";
+    const statusText = st === "present" ? "PRESENT" : st === "absent" ? "ABSENT" : st === "late" ? "LEAVE" : "UNMARKED";
     return [
       String(s.rollNo || idx + 1),
       s.name,
@@ -385,7 +385,8 @@ export async function downloadStudentDailyAttendancePdf({
         const val = String(hookData.cell.raw);
         if (val === "PRESENT") hookData.cell.styles.textColor = [16, 128, 64];
         else if (val === "ABSENT") hookData.cell.styles.textColor = [200, 30, 30];
-        else if (val === "LATE") hookData.cell.styles.textColor = [190, 110, 0];
+        else if (val === "LEAVE" || val === "LATE") hookData.cell.styles.textColor = [190, 110, 0];
+        else if (val === "UNMARKED") hookData.cell.styles.textColor = [120, 120, 120];
       }
     },
   });
@@ -475,7 +476,7 @@ export async function downloadStudentMonthlyAttendancePdf({
   doc.text(`Month: ${monthName}`, marginX, y + 86);
   doc.text(`Present: ${stats.presentDays} Days`, marginX + 110, y + 86);
   doc.text(`Absent: ${stats.absentDays} Days`, marginX + 200, y + 86);
-  doc.text(`Late: ${stats.lateDays} Days`, marginX + 290, y + 86);
+  doc.text(`Leave: ${stats.lateDays} Days`, marginX + 290, y + 86);
   doc.text(`Attendance Rate: ${stats.percent}%`, marginX + 380, y + 86);
 
   const year = mParts[0] || new Date().getFullYear();
@@ -491,7 +492,7 @@ export async function downloadStudentMonthlyAttendancePdf({
     let statusText = "Unmarked";
     if (st === "present") statusText = "PRESENT";
     else if (st === "absent") statusText = "ABSENT";
-    else if (st === "late") statusText = "LATE";
+    else if (st === "late") statusText = "LEAVE";
     else if (isSunday) statusText = "Sunday Off";
 
     tableRows.push([
@@ -499,7 +500,7 @@ export async function downloadStudentMonthlyAttendancePdf({
       dayStr,
       dt.toFormat("cccc"),
       statusText,
-      st ? `Recorded (${st.toUpperCase()})` : isSunday ? "Weekend Holiday" : "—",
+      st ? `Recorded (${st === "late" ? "LEAVE" : st.toUpperCase()})` : isSunday ? "Weekend Holiday" : "—",
     ]);
   }
 
@@ -522,7 +523,7 @@ export async function downloadStudentMonthlyAttendancePdf({
         const val = String(hookData.cell.raw);
         if (val === "PRESENT") hookData.cell.styles.textColor = [16, 128, 64];
         else if (val === "ABSENT") hookData.cell.styles.textColor = [200, 30, 30];
-        else if (val === "LATE") hookData.cell.styles.textColor = [190, 110, 0];
+        else if (val === "LEAVE" || val === "LATE") hookData.cell.styles.textColor = [190, 110, 0];
         else if (val === "Sunday Off") hookData.cell.styles.textColor = [120, 120, 120];
       }
     },

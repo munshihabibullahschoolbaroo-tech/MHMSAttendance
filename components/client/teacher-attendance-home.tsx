@@ -10,24 +10,48 @@ import {
   AlertTriangle,
   Loader2,
   FilePlus2,
-  MapPin,
   FileCheck,
   ChevronRight,
   X,
-  Compass,
-  Layers,
+  FileText,
+  Trash2,
+  Briefcase,
+  Send,
+  Building,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, formFieldLabelClass } from "@/components/ui/input";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
-import { SchoolCampusMap } from "@/components/client/map/school-campus-map";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, resolveDocumentViewUrl } from "@/lib/utils";
+import { compressImageForUpload } from "@/lib/client/compress-image";
 import { motion, AnimatePresence } from "framer-motion";
 import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
 import { AppDatePicker } from "@/components/ui/app-date-picker";
+import { AppTimePicker } from "@/components/ui/app-time-picker";
+import { AppSelect } from "@/components/ui/app-select";
+import { Separator } from "@/components/ui/separator";
+import { isPastLateCutoff } from "@/lib/date/late-check";
+
+function formatCheckInTime(raw: any): string {
+  if (!raw) return "Today";
+  let ms: number | null = null;
+  if (typeof raw === "number") {
+    ms = raw > 1e11 ? raw : raw * 1000;
+  } else if (typeof raw === "string") {
+    const p = Date.parse(raw);
+    if (!isNaN(p)) ms = p;
+  } else if (typeof raw === "object") {
+    if (typeof raw.seconds === "number") ms = raw.seconds * 1000;
+    else if (typeof raw._seconds === "number") ms = raw._seconds * 1000;
+    else if (typeof raw.toMillis === "function") ms = raw.toMillis();
+    else if (typeof raw.toDate === "function") ms = raw.toDate().getTime();
+  }
+  if (!ms || isNaN(ms)) return "Today";
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
 
 type TodayPayload = {
   date: string;
@@ -37,6 +61,7 @@ type TodayPayload = {
     latitude: number;
     longitude: number;
     radiusMeters: number;
+    teacherLateTime?: string;
   };
   teacher: {
     name: string;
@@ -48,12 +73,24 @@ type TodayPayload = {
     schoolSectionId: string | null;
     casualLeavesThisMonth: number;
     maxCasualLeavesAllowed: number;
+    carriedForwardCasualLeaves?: number;
+    remainingCasualLeaves?: number;
   };
   session: {
-    checkInTime?: { seconds: number };
-    checkOutTime?: { seconds: number };
+    checkInTime?: { seconds?: number; _seconds?: number } | string | number | null;
+    checkOutTime?: { seconds?: number; _seconds?: number } | string | number | null;
     checkInGps?: { distanceM: number };
     status?: string;
+    isLate?: boolean;
+    emergencyLeave?: {
+      active: boolean;
+      type: "school_duty" | "emergency";
+      departureTime: string;
+      willReturn: boolean;
+      returnTime?: string | null;
+      reason: string;
+      status: "pending" | "approved" | "rejected";
+    } | null;
   } | null;
   isCheckedIn: boolean;
   isCheckedOut: boolean;
@@ -73,9 +110,15 @@ export function TeacherAttendanceHome() {
   const [loading, setLoading] = React.useState(true);
   const [punching, setPunching] = React.useState(false);
   const [punchOutConfirmOpen, setPunchOutConfirmOpen] = React.useState(false);
+  const [lateWarningModalOpen, setLateWarningModalOpen] = React.useState(false);
+  const [lateCheckData, setLateCheckData] = React.useState<{
+    currentFormatted: string;
+    cutoffFormatted: string;
+    minutesLate: number;
+  } | null>(null);
 
-  // Mobile Bottom Sheet state: "punch" | "leave" | "map" | null
-  const [activeSheet, setActiveSheet] = React.useState<"punch" | "leave" | "map" | null>(null);
+  // Mobile Bottom Sheet state: "punch" | "leave" | "emergency" | null
+  const [activeSheet, setActiveSheet] = React.useState<"punch" | "leave" | "emergency" | null>(null);
 
   // GPS state
   const [gpsCoords, setGpsCoords] = React.useState<{ lat: number; lng: number } | null>(null);
@@ -87,17 +130,55 @@ export function TeacherAttendanceHome() {
   const [leaveStart, setLeaveStart] = React.useState("");
   const [leaveEnd, setLeaveEnd] = React.useState("");
   const [leaveReason, setLeaveReason] = React.useState("");
-  const [leaveDocUrl, setLeaveDocUrl] = React.useState("");
+  const [leaveDocs, setLeaveDocs] = React.useState<Array<{ url: string; name: string; sizeFormatted?: string }>>([]);
   const [uploadingDoc, setUploadingDoc] = React.useState(false);
   const [submittingLeave, setSubmittingLeave] = React.useState(false);
+
+  // Emergency Leave / On-Duty Departure state
+  const [emergencyModalOpen, setEmergencyModalOpen] = React.useState(false);
+  const [emergencyType, setEmergencyType] = React.useState<"school_duty" | "emergency">("school_duty");
+  const [emergencyDepartureTime, setEmergencyDepartureTime] = React.useState("10:30");
+  const [emergencyWillReturn, setEmergencyWillReturn] = React.useState(true);
+  const [emergencyReturnTime, setEmergencyReturnTime] = React.useState("14:00");
+  const [emergencyReason, setEmergencyReason] = React.useState("");
+  const [emergencyAdminUid, setEmergencyAdminUid] = React.useState("");
+  const [submittingEmergency, setSubmittingEmergency] = React.useState(false);
+  const [adminsList, setAdminsList] = React.useState<
+    Array<{ id: string; name: string; email: string; role?: string }>
+  >([]);
 
   React.useEffect(() => {
     setMounted(true);
   }, []);
 
+  React.useEffect(() => {
+    async function loadAdmins() {
+      try {
+        const auth = getFirebaseAuth();
+        const u = auth.currentUser;
+        if (!u) return;
+        const token = await u.getIdToken();
+        const res = await fetch("/api/school/admins", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const list = json.admins ?? [];
+          setAdminsList(list);
+          if (list.length > 0) {
+            setEmergencyAdminUid(list[0].id);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch admins:", err);
+      }
+    }
+    void loadAdmins();
+  }, []);
+
   // Prevent background scrolling when mobile bottom sheet or desktop modal is open
   React.useEffect(() => {
-    if (activeSheet || leaveModalOpen) {
+    if (activeSheet || leaveModalOpen || lateWarningModalOpen || emergencyModalOpen) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -105,7 +186,7 @@ export function TeacherAttendanceHome() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [activeSheet, leaveModalOpen]);
+  }, [activeSheet, leaveModalOpen, lateWarningModalOpen, emergencyModalOpen]);
 
   // Exact dates requested in modal
   const requestedDates = React.useMemo(() => {
@@ -179,14 +260,61 @@ export function TeacherAttendanceHome() {
       if (e.key === "Escape") {
         setActiveSheet(null);
         setLeaveModalOpen(false);
+        setLateWarningModalOpen(false);
+        setEmergencyModalOpen(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Punch In Handler
-  const handlePunchIn = async () => {
+  // Submit Emergency Leave / On-Duty Departure
+  const handleSubmitEmergencyLeave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emergencyReason.trim()) {
+      toast.error("Please describe the official errand or emergency reason.");
+      return;
+    }
+    setSubmittingEmergency(true);
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) throw new Error("Not signed in");
+      const token = await u.getIdToken();
+
+      const res = await fetch("/api/school/attendance/emergency-leave", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: emergencyType,
+          departureTime: emergencyDepartureTime,
+          willReturn: emergencyWillReturn,
+          returnTime: emergencyWillReturn ? emergencyReturnTime : null,
+          reason: emergencyReason.trim(),
+          assigneeAdminUid: emergencyAdminUid || null,
+        }),
+      });
+
+      const resJson = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(resJson.error ?? "Failed to submit departure request");
+
+      toast.success(resJson.message ?? "Departure request submitted!");
+      setEmergencyModalOpen(false);
+      setActiveSheet(null);
+      setEmergencyReason("");
+      await refreshStatus();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to submit departure request");
+    } finally {
+      setSubmittingEmergency(false);
+    }
+  };
+
+  // Core execution of Punch In
+  const executePunchIn = async () => {
     if (!gpsCoords) {
       toast.error("Waiting for GPS location fix. Please allow location access.");
       return;
@@ -213,7 +341,12 @@ export function TeacherAttendanceHome() {
       const resJson = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(resJson.error ?? "Check-in failed");
 
-      toast.success(resJson.message ?? "Checked in successfully!");
+      if (resJson.isLate) {
+        toast.warning(resJson.message ?? "Checked in. Late arrival logged.");
+      } else {
+        toast.success(resJson.message ?? "Checked in successfully!");
+      }
+      setLateWarningModalOpen(false);
       await refreshStatus();
       setActiveSheet(null);
     } catch (e) {
@@ -221,6 +354,24 @@ export function TeacherAttendanceHome() {
     } finally {
       setPunching(false);
     }
+  };
+
+  // Punch In Handler with late arrival detection
+  const handlePunchIn = () => {
+    const cutoffStr = data?.config?.teacherLateTime || "09:00 AM";
+    const check = isPastLateCutoff(new Date(), cutoffStr);
+
+    if (check.isLate) {
+      setLateCheckData({
+        currentFormatted: check.currentFormatted,
+        cutoffFormatted: check.cutoffFormatted,
+        minutesLate: check.minutesLate,
+      });
+      setLateWarningModalOpen(true);
+      return;
+    }
+
+    void executePunchIn();
   };
 
   // Punch Out Handler
@@ -258,10 +409,24 @@ export function TeacherAttendanceHome() {
     }
   };
 
-  // File upload for Medical Leave certificate
+  // File upload for Medical Leave certificate(s)
   const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+
+    const files = Array.from(fileList);
+    for (const f of files) {
+      const isImage = f.type.startsWith("image/") && !f.name.toLowerCase().endsWith(".pdf");
+      if (!isImage) {
+        toast.error(`"${f.name}" is not an image. Only photo/image files (JPG, PNG, WebP) are allowed.`);
+        e.target.value = "";
+        return;
+      }
+      if (f.size > 8 * 1024 * 1024) {
+        toast.error(`"${f.name}" exceeds 8MB limit`);
+        return;
+      }
+    }
 
     setUploadingDoc(true);
     try {
@@ -270,21 +435,40 @@ export function TeacherAttendanceHome() {
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("folder", "leave_docs");
+      const uploadedList: Array<{ url: string; name: string; sizeFormatted?: string }> = [];
 
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      for (const file of files) {
+        // Optimize & compress image file client-side (reduces 3-8MB phone camera photos to ~35-85KB WebP)
+        const uploadFile = await compressImageForUpload(file);
 
-      const uploadData = await res.json();
-      if (!res.ok) throw new Error(uploadData.error ?? "Failed to upload document");
+        const formData = new FormData();
+        formData.append("file", uploadFile);
+        formData.append("folder", "leave_docs");
 
-      setLeaveDocUrl(uploadData.url);
-      toast.success("Medical document attached!");
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+
+        const uploadData = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(uploadData.error ?? `Failed to upload "${file.name}"`);
+
+        const sizeKb = Math.round(uploadFile.size / 1024);
+        uploadedList.push({
+          url: uploadData.url,
+          name: file.name,
+          sizeFormatted: `${sizeKb} KB`,
+        });
+      }
+
+      setLeaveDocs((prev) => [...prev, ...uploadedList]);
+      toast.success(
+        uploadedList.length === 1
+          ? "Medical photo attached!"
+          : `${uploadedList.length} medical photos attached!`
+      );
+      e.target.value = "";
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Document upload failed");
     } finally {
@@ -292,23 +476,49 @@ export function TeacherAttendanceHome() {
     }
   };
 
+  const removeLeaveDoc = async (indexToRemove: number) => {
+    const docToRemove = leaveDocs[indexToRemove];
+    setLeaveDocs((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+    if (docToRemove?.url) {
+      try {
+        const auth = getFirebaseAuth();
+        const u = auth.currentUser;
+        if (u) {
+          const token = await u.getIdToken();
+          await fetch("/api/upload", {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ url: docToRemove.url }),
+          });
+        }
+      } catch (err) {
+        console.warn("Failed to delete blob from storage:", err);
+      }
+    }
+    toast.info("Document removed and deleted from storage");
+  };
+
   // Submit Leave Application
   const submitLeaveApplication = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (leaveType === "medical" && !leaveDocUrl) {
-      toast.error("Please upload a medical certificate or doctor note.");
+    if (leaveType === "medical" && leaveDocs.length === 0) {
+      toast.error("Please upload at least one medical certificate or doctor note.");
       return;
     }
 
+    const maxAllowed = teacher?.maxCasualLeavesAllowed ?? 2;
     if (leaveType === "casual") {
-      if (requestedDaysCount > 2) {
-        toast.error("Casual leave cannot exceed 2 days in a calendar month.");
+      if (requestedDaysCount > maxAllowed) {
+        toast.error(`Casual leave cannot exceed ${maxAllowed} day(s) for this month (including carried forward days).`);
         return;
       }
       const used = teacher?.casualLeavesThisMonth ?? 0;
-      if (used + requestedDaysCount > 2) {
+      if (used + requestedDaysCount > maxAllowed) {
         toast.error(
-          `Casual leave quota exceeded. You already have ${used} day(s) used this month. Max 2 days allowed.`
+          `Casual leave quota exceeded. You already have ${used} day(s) used this month. Max ${maxAllowed} days allowed.`
         );
         return;
       }
@@ -321,6 +531,8 @@ export function TeacherAttendanceHome() {
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
 
+      const docUrls = leaveDocs.map((d) => d.url);
+
       const res = await fetch("/api/school/leave", {
         method: "POST",
         headers: {
@@ -332,7 +544,8 @@ export function TeacherAttendanceHome() {
           startDate: leaveStart,
           endDate: leaveEnd,
           reason: leaveReason.trim(),
-          documentUrl: leaveDocUrl || undefined,
+          documentUrl: docUrls[0] || undefined,
+          documentUrls: docUrls,
         }),
       });
 
@@ -343,7 +556,7 @@ export function TeacherAttendanceHome() {
       setLeaveModalOpen(false);
       setActiveSheet(null);
       setLeaveReason("");
-      setLeaveDocUrl("");
+      setLeaveDocs([]);
       await refreshStatus();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error submitting leave");
@@ -383,7 +596,7 @@ export function TeacherAttendanceHome() {
         >
           <span className="font-semibold text-xs">Casual / Regular</span>
           <span className="text-[10px] text-zinc-500 mt-0.5">
-            {teacher?.casualLeavesThisMonth ?? 0}/2 used this month
+            {teacher?.casualLeavesThisMonth ?? 0}/{teacher?.maxCasualLeavesAllowed ?? 2} used this month
           </span>
         </button>
 
@@ -426,10 +639,10 @@ export function TeacherAttendanceHome() {
       {requestedDaysCount > 0 && (
         <div
           className={cn(
-            "rounded-lg p-3 text-xs border space-y-1",
+            "rounded-lg p-3 text-xs border space-y-1.5",
             leaveType === "casual" &&
-              (requestedDaysCount > 2 ||
-                (teacher?.casualLeavesThisMonth ?? 0) + requestedDaysCount > 2)
+              (requestedDaysCount > (teacher?.maxCasualLeavesAllowed ?? 2) ||
+                (teacher?.casualLeavesThisMonth ?? 0) + requestedDaysCount > (teacher?.maxCasualLeavesAllowed ?? 2))
               ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400"
               : "border-blue-500/20 bg-blue-500/10 text-blue-800 dark:text-blue-300"
           )}
@@ -437,19 +650,24 @@ export function TeacherAttendanceHome() {
           <div className="flex items-center justify-between font-semibold">
             <span>Requested: {requestedDaysCount} calendar day(s)</span>
             {leaveType === "casual" && (
-              <span>Monthly Quota: {teacher?.casualLeavesThisMonth ?? 0}/2 used</span>
+              <span>Monthly Quota: {teacher?.casualLeavesThisMonth ?? 0}/{teacher?.maxCasualLeavesAllowed ?? 2} used</span>
             )}
           </div>
-          {leaveType === "casual" && requestedDaysCount > 2 && (
+          {leaveType === "casual" && (teacher?.carriedForwardCasualLeaves ?? 0) > 0 && (
+            <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+              ✨ 2 regular + {teacher?.carriedForwardCasualLeaves} carried forward from prior months = {teacher?.maxCasualLeavesAllowed ?? 2} days available
+            </p>
+          )}
+          {leaveType === "casual" && requestedDaysCount > (teacher?.maxCasualLeavesAllowed ?? 2) && (
             <p className="text-[11px] font-medium text-red-600 dark:text-red-400">
-              ⚠️ Casual leave cannot exceed 2 days in a calendar month.
+              ⚠️ Casual leave cannot exceed {teacher?.maxCasualLeavesAllowed ?? 2} days for this month.
             </p>
           )}
           {leaveType === "casual" &&
-            requestedDaysCount <= 2 &&
-            (teacher?.casualLeavesThisMonth ?? 0) + requestedDaysCount > 2 && (
+            requestedDaysCount <= (teacher?.maxCasualLeavesAllowed ?? 2) &&
+            (teacher?.casualLeavesThisMonth ?? 0) + requestedDaysCount > (teacher?.maxCasualLeavesAllowed ?? 2) && (
               <p className="text-[11px] font-medium text-red-600 dark:text-red-400">
-                ⚠️ Exceeds quota: You already have {teacher?.casualLeavesThisMonth ?? 0} casual day(s) this month.
+                ⚠️ Exceeds quota: You already have {teacher?.casualLeavesThisMonth ?? 0} casual day(s) this month (maximum {teacher?.maxCasualLeavesAllowed ?? 2} allowed).
               </p>
             )}
         </div>
@@ -470,24 +688,86 @@ export function TeacherAttendanceHome() {
 
       {/* Medical Certificate Upload */}
       {leaveType === "medical" && (
-        <label className="flex flex-col gap-1 text-xs">
-          <span className={formFieldLabelClass}>Medical Certificate / Prescription (PDF or Image)</span>
+        <div className="flex flex-col gap-2 text-xs">
+          <div className="flex items-center justify-between">
+            <span className={formFieldLabelClass}>
+              Medical Certificate / Prescription (Photos / Images only)
+            </span>
+            {leaveDocs.length > 0 && (
+              <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                {leaveDocs.length} attached
+              </span>
+            )}
+          </div>
+
           <div className="flex items-center gap-2">
             <Input
               type="file"
-              accept="image/*,application/pdf"
+              multiple
+              accept="image/jpeg,image/png,image/webp,image/jpg"
               onChange={(e) => void handleDocUpload(e)}
               disabled={uploadingDoc}
-              className="text-xs"
+              className="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-blue-950/40 dark:file:text-blue-300"
             />
-            {uploadingDoc && <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />}
+            {uploadingDoc && (
+              <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 shrink-0">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-[11px]">Uploading...</span>
+              </div>
+            )}
           </div>
-          {leaveDocUrl && (
-            <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1">
-              ✓ Document attached successfully
-            </p>
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            Upload doctor prescription, medical certificate or report photos (JPG, PNG, WebP).
+          </p>
+
+          {/* Attached Documents Preview & Remove List */}
+          {leaveDocs.length > 0 && (
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
+                Attached Files ({leaveDocs.length}):
+              </span>
+              <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto pr-1">
+                {leaveDocs.map((doc, idx) => (
+                  <div
+                    key={doc.url + idx}
+                    className="flex items-center justify-between gap-2 p-2 rounded-xl bg-zinc-100 dark:bg-white/[0.05] border border-zinc-200 dark:border-white/10 text-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="size-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                      <span className="truncate font-medium text-zinc-800 dark:text-zinc-200" title={doc.name}>
+                        {doc.name}
+                      </span>
+                      {doc.sizeFormatted && (
+                        <span className="shrink-0 text-[10px] text-zinc-400 font-mono">
+                          ({doc.sizeFormatted})
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <a
+                        href={resolveDocumentViewUrl(doc.url)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-0.5 rounded"
+                      >
+                        Preview
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => removeLeaveDoc(idx)}
+                        className="p-1 rounded-md text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                        title="Remove document"
+                        aria-label={`Remove ${doc.name}`}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
-        </label>
+        </div>
       )}
 
       <div className="pt-2 flex justify-end gap-2">
@@ -509,13 +789,180 @@ export function TeacherAttendanceHome() {
             submittingLeave ||
             uploadingDoc ||
             (leaveType === "casual" &&
-              (requestedDaysCount > 2 ||
-                (teacher?.casualLeavesThisMonth ?? 0) + requestedDaysCount > 2))
+              (requestedDaysCount > (teacher?.maxCasualLeavesAllowed ?? 2) ||
+                (teacher?.casualLeavesThisMonth ?? 0) + requestedDaysCount > (teacher?.maxCasualLeavesAllowed ?? 2)))
           }
           className="gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
         >
           {submittingLeave ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           Submit Leave Application
+        </Button>
+      </div>
+    </form>
+  );
+
+  // Render emergency leave / on-duty form (reused in desktop modal and mobile bottom sheet)
+  const renderEmergencyForm = (isBottomSheet: boolean = false) => (
+    <form onSubmit={handleSubmitEmergencyLeave} className="flex flex-col flex-1 overflow-y-auto p-4 space-y-4">
+      {/* Category Selector */}
+      <div className="space-y-1.5">
+        <span className={formFieldLabelClass}>Departure Category</span>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setEmergencyType("school_duty")}
+            className={cn(
+              "flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all cursor-pointer",
+              emergencyType === "school_duty"
+                ? "border-amber-500 bg-amber-500/10 text-amber-900 dark:text-amber-200 font-semibold shadow-sm"
+                : "border-zinc-200 hover:border-zinc-300 dark:border-white/10 dark:hover:border-white/20 text-zinc-600 dark:text-zinc-400"
+            )}
+          >
+            <Building className="size-4 mb-1 text-amber-600 dark:text-amber-400" />
+            <span className="text-xs font-semibold">Official School Duty</span>
+            <span className="text-[10px] opacity-75 mt-0.5">Bank / Board / Dept work</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setEmergencyType("emergency")}
+            className={cn(
+              "flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all cursor-pointer",
+              emergencyType === "emergency"
+                ? "border-red-500 bg-red-500/10 text-red-900 dark:text-red-200 font-semibold shadow-sm"
+                : "border-zinc-200 hover:border-zinc-300 dark:border-white/10 dark:hover:border-white/20 text-zinc-600 dark:text-zinc-400"
+            )}
+          >
+            <AlertTriangle className="size-4 mb-1 text-red-500" />
+            <span className="text-xs font-semibold">Emergency Departure</span>
+            <span className="text-[10px] opacity-75 mt-0.5">Sudden personal / urgent</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Time fields */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <AppTimePicker
+            label="Departure Time *"
+            value={emergencyDepartureTime}
+            onChange={setEmergencyDepartureTime}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <span className={formFieldLabelClass}>Will Return Today?</span>
+          <div className="flex h-10 rounded-xl border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800/50 p-1">
+            <button
+              type="button"
+              onClick={() => setEmergencyWillReturn(true)}
+              className={cn(
+                "flex-1 rounded-lg text-xs font-semibold transition-all cursor-pointer",
+                emergencyWillReturn
+                  ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+              )}
+            >
+              Yes, Returning
+            </button>
+            <button
+              type="button"
+              onClick={() => setEmergencyWillReturn(false)}
+              className={cn(
+                "flex-1 rounded-lg text-xs font-semibold transition-all cursor-pointer",
+                !emergencyWillReturn
+                  ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                  : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+              )}
+            >
+              No, For Day
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {emergencyWillReturn && (
+        <div>
+          <AppTimePicker
+            label="Expected Return Time"
+            value={emergencyReturnTime}
+            onChange={setEmergencyReturnTime}
+          />
+        </div>
+      )}
+
+      {/* Assign to Administrator */}
+      <div className="space-y-1.5">
+        <span className={formFieldLabelClass}>Notify / Assign to Admin</span>
+        <AppSelect
+          value={emergencyAdminUid}
+          onChange={setEmergencyAdminUid}
+          placeholder="Select Administrator..."
+          options={adminsList.map((a) => {
+            const isSuper = a.role === "super_admin";
+            const roleLabel = isSuper ? "👑 Super Admin" : "🛡️ School Admin";
+            return {
+              value: a.id,
+              label: a.name
+                ? `${a.name} (${a.email}) — ${roleLabel}`
+                : `${a.email} — ${roleLabel}`,
+              sublabel: isSuper ? "Full administrative authority" : "School administrator",
+              badge: isSuper ? "Super Admin" : "Admin",
+            };
+          })}
+        />
+      </div>
+
+      {/* Detailed Reason */}
+      <label className="flex flex-col gap-1 text-xs">
+        <span className={formFieldLabelClass}>Reason & Destination *</span>
+        <textarea
+          required
+          rows={3}
+          value={emergencyReason}
+          onChange={(e) => setEmergencyReason(e.target.value)}
+          placeholder={
+            emergencyType === "school_duty"
+              ? "Specify location (e.g., J&K Bank Main Branch for payroll processing, or CEO office for registration documents)..."
+              : "Briefly explain the emergency reason for early departure..."
+          }
+          className="w-full rounded-xl border border-zinc-300 bg-white p-2.5 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400"
+        />
+      </label>
+
+      {/* Footer Buttons */}
+      <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-100 dark:border-white/10">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={submittingEmergency}
+          onClick={() => {
+            if (isBottomSheet) {
+              setActiveSheet(null);
+            } else {
+              setEmergencyModalOpen(false);
+            }
+          }}
+          className="h-10 px-4 rounded-xl text-xs cursor-pointer"
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          disabled={submittingEmergency}
+          className="h-10 px-5 rounded-xl text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white gap-2 cursor-pointer shadow-md shadow-amber-600/20"
+        >
+          {submittingEmergency ? (
+            <>
+              <Loader2 className="size-3.5 animate-spin" />
+              <span>Submitting…</span>
+            </>
+          ) : (
+            <>
+              <Send className="size-3.5" />
+              <span>Submit Departure Request</span>
+            </>
+          )}
         </Button>
       </div>
     </form>
@@ -650,7 +1097,7 @@ export function TeacherAttendanceHome() {
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
                 {leave
                   ? `Active (${leave.type.toUpperCase()}) • ${leave.status}`
-                  : `Casual (${teacher?.casualLeavesThisMonth ?? 0}/2 used) • Medical`}
+                  : `Casual (${teacher?.casualLeavesThisMonth ?? 0}/${teacher?.maxCasualLeavesAllowed ?? 2} used) • Medical`}
               </p>
             </div>
           </div>
@@ -660,46 +1107,12 @@ export function TeacherAttendanceHome() {
             </span>
           </div>
         </motion.div>
-
-        {/* Card 3: Campus & Geofence Radar Map */}
-        <motion.div
-          role="button"
-          tabIndex={0}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => setActiveSheet("map")}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setActiveSheet("map");
-            }
-          }}
-          className="w-full flex items-center justify-between p-4 rounded-2xl border border-zinc-200/90 bg-white shadow-sm transition-colors cursor-pointer hover:border-zinc-300 dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 text-left"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400">
-              <MapPin className="size-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
-                Campus Radar &amp; Map
-              </span>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
-                {config?.campusName} • {config?.radiusMeters}m Geofence
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0 pl-2 pointer-events-none">
-            <span className="rounded-lg bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 dark:bg-white/10 dark:text-zinc-200">
-              Map &gt;
-            </span>
-          </div>
-        </motion.div>
       </div>
 
       {/* ─────────────────────────────────────────────────────────── */}
-      {/* DESKTOP & TABLET VIEW (Permanent 2-Column Grid) */}
+      {/* DESKTOP & TABLET VIEW */}
       {/* ─────────────────────────────────────────────────────────── */}
-      <div className="hidden md:grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+      <div className="hidden md:block max-w-2xl mx-auto w-full">
         {/* Attendance Card */}
         <Card className="border-zinc-200 dark:border-white/10 shadow-md">
           <CardHeader className="pb-3">
@@ -801,9 +1214,7 @@ export function TeacherAttendanceHome() {
                   <div>
                     <span className="text-zinc-500">Punch In Recorded:</span>
                     <p className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
-                      {data?.session?.checkInTime
-                        ? new Date(data.session.checkInTime.seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                        : "Today"}
+                      {formatCheckInTime(data?.session?.checkInTime)}
                     </p>
                   </div>
                   {data?.session?.checkInGps?.distanceM !== undefined && (
@@ -815,6 +1226,62 @@ export function TeacherAttendanceHome() {
                     </div>
                   )}
                 </div>
+
+                {/* Emergency Leave / On-Duty Departure Status or Trigger */}
+                {data?.session?.emergencyLeave?.active ? (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-700 dark:text-amber-400">
+                        <Briefcase className="size-3.5" />
+                        <span>
+                          {data.session.emergencyLeave.type === "school_duty"
+                            ? "🏛️ Official School Duty (OD)"
+                            : "🚨 Emergency Departure"}
+                        </span>
+                      </div>
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                          data.session.emergencyLeave.status === "approved"
+                            ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
+                            : data.session.emergencyLeave.status === "rejected"
+                            ? "bg-red-500/20 text-red-700 dark:text-red-300 border border-red-500/30"
+                            : "bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                        )}
+                      >
+                        {data.session.emergencyLeave.status}
+                      </span>
+                    </div>
+                    <div className="text-zinc-600 dark:text-zinc-300 text-[11px] space-y-0.5">
+                      <p>
+                        <strong>Departing at:</strong> {data.session.emergencyLeave.departureTime}
+                        {data.session.emergencyLeave.returnTime && (
+                          <> · <strong>Expected Return:</strong> {data.session.emergencyLeave.returnTime}</>
+                        )}
+                      </p>
+                      <p className="italic text-zinc-500 dark:text-zinc-400">
+                        &quot;{data.session.emergencyLeave.reason}&quot;
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const now = new Date();
+                      const hh = String(now.getHours()).padStart(2, "0");
+                      const mm = String(now.getMinutes()).padStart(2, "0");
+                      setEmergencyDepartureTime(`${hh}:${mm}`);
+                      setEmergencyModalOpen(true);
+                    }}
+                    className="w-full h-10 gap-2 border-amber-500/30 bg-amber-500/10 text-amber-800 hover:bg-amber-500/20 dark:text-amber-300 font-semibold text-xs cursor-pointer rounded-xl transition-all"
+                  >
+                    <Briefcase className="size-3.5 text-amber-600 dark:text-amber-400" />
+                    <span>Emergency Leave / On-Duty Departure</span>
+                  </Button>
+                )}
 
                 <Button
                   type="button"
@@ -838,19 +1305,6 @@ export function TeacherAttendanceHome() {
             )}
           </CardContent>
         </Card>
-
-        {/* School Campus Geofence Map */}
-        {config && (
-          <SchoolCampusMap
-            schoolLat={config.latitude}
-            schoolLng={config.longitude}
-            radiusMeters={config.radiusMeters}
-            schoolName={config.name}
-            campusName={config.campusName}
-            userLat={gpsCoords?.lat}
-            userLng={gpsCoords?.lng}
-          />
-        )}
       </div>
 
       {/* ─────────────────────────────────────────────────────────── */}
@@ -884,7 +1338,7 @@ export function TeacherAttendanceHome() {
                   <button
                     type="button"
                     onClick={() => setActiveSheet(null)}
-                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                     aria-label="Close sheet"
                   >
                     <X className="size-4" />
@@ -894,20 +1348,21 @@ export function TeacherAttendanceHome() {
                   <div className="mx-auto mt-3 mb-2 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700" />
 
                   {/* Sheet Header */}
-                  <div className="px-5 py-2.5 pr-14 border-b border-zinc-100 dark:border-white/10">
+                  <div className="px-5 py-2.5 pr-14">
                     <div className="space-y-0.5">
                       <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
                         {activeSheet === "punch" && "Daily Teacher Punch"}
                         {activeSheet === "leave" && "Apply for Leave"}
-                        {activeSheet === "map" && "Campus Radar & Geofence"}
+                        {activeSheet === "emergency" && "Emergency Leave / On-Duty Departure"}
                       </h3>
                       <p className="text-[11px] text-zinc-500 truncate">
                         {activeSheet === "punch" && `${config?.name} • ${config?.campusName}`}
                         {activeSheet === "leave" && "Submit an official leave request to administration"}
-                        {activeSheet === "map" && `Attendance Geofence (${config?.radiusMeters}m radius)`}
+                        {activeSheet === "emergency" && "Leaving school campus after morning punch-in"}
                       </p>
                     </div>
                   </div>
+                  <Separator />
 
                   {/* Sheet Content (Keyboard-Safe Scrollable Viewport) */}
                   <div className="flex-1 overflow-y-auto p-5 pb-8 space-y-4 overscroll-contain">
@@ -975,9 +1430,7 @@ export function TeacherAttendanceHome() {
                               <div>
                                 <span className="text-zinc-500">Punch In Recorded:</span>
                                 <p className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
-                                  {data?.session?.checkInTime
-                                    ? new Date(data.session.checkInTime.seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                                    : "Today"}
+                                  {formatCheckInTime(data?.session?.checkInTime)}
                                 </p>
                               </div>
                               {data?.session?.checkInGps?.distanceM !== undefined && (
@@ -989,6 +1442,62 @@ export function TeacherAttendanceHome() {
                                 </div>
                               )}
                             </div>
+
+                            {/* Emergency Leave / On-Duty Departure Status or Trigger */}
+                            {data?.session?.emergencyLeave?.active ? (
+                              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 space-y-1.5 text-xs">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5 font-bold text-amber-700 dark:text-amber-400">
+                                    <Briefcase className="size-3.5" />
+                                    <span>
+                                      {data.session.emergencyLeave.type === "school_duty"
+                                        ? "🏛️ Official School Duty (OD)"
+                                        : "🚨 Emergency Departure"}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className={cn(
+                                      "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                                      data.session.emergencyLeave.status === "approved"
+                                        ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"
+                                        : data.session.emergencyLeave.status === "rejected"
+                                        ? "bg-red-500/20 text-red-700 dark:text-red-300 border border-red-500/30"
+                                        : "bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                                    )}
+                                  >
+                                    {data.session.emergencyLeave.status}
+                                  </span>
+                                </div>
+                                <div className="text-zinc-600 dark:text-zinc-300 text-[11px] space-y-0.5">
+                                  <p>
+                                    <strong>Departing at:</strong> {data.session.emergencyLeave.departureTime}
+                                    {data.session.emergencyLeave.returnTime && (
+                                      <> · <strong>Expected Return:</strong> {data.session.emergencyLeave.returnTime}</>
+                                    )}
+                                  </p>
+                                  <p className="italic text-zinc-500 dark:text-zinc-400">
+                                    &quot;{data.session.emergencyLeave.reason}&quot;
+                                  </p>
+                                </div>
+                              </div>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  const now = new Date();
+                                  const hh = String(now.getHours()).padStart(2, "0");
+                                  const mm = String(now.getMinutes()).padStart(2, "0");
+                                  setEmergencyDepartureTime(`${hh}:${mm}`);
+                                  setActiveSheet("emergency");
+                                }}
+                                className="w-full h-10 gap-2 border-amber-500/30 bg-amber-500/10 text-amber-800 hover:bg-amber-500/20 dark:text-amber-300 font-semibold text-xs cursor-pointer rounded-xl transition-all"
+                              >
+                                <Briefcase className="size-3.5 text-amber-600 dark:text-amber-400" />
+                                <span>Emergency Leave / On-Duty Departure</span>
+                              </Button>
+                            )}
 
                             <Button
                               type="button"
@@ -1016,23 +1525,8 @@ export function TeacherAttendanceHome() {
                     {/* 2. Leave Sheet Content (Form with Keyboard-Safe Scroll) */}
                     {activeSheet === "leave" && renderLeaveForm()}
 
-                    {/* 3. Map Sheet Content */}
-                    {activeSheet === "map" && config && (
-                      <div className="space-y-3">
-                        <SchoolCampusMap
-                          schoolLat={config.latitude}
-                          schoolLng={config.longitude}
-                          radiusMeters={config.radiusMeters}
-                          schoolName={config.name}
-                          campusName={config.campusName}
-                          userLat={gpsCoords?.lat}
-                          userLng={gpsCoords?.lng}
-                        />
-                        <p className="text-[11px] text-zinc-500 text-center">
-                          Campus: {config.name} ({config.campusName}) • Kargil, UT Ladakh
-                        </p>
-                      </div>
-                    )}
+                    {/* 3. Emergency Sheet Content (Form with Keyboard-Safe Scroll) */}
+                    {activeSheet === "emergency" && renderEmergencyForm(true)}
                   </div>
                 </motion.div>
               </div>
@@ -1069,7 +1563,7 @@ export function TeacherAttendanceHome() {
                     <button
                       type="button"
                       onClick={() => setLeaveModalOpen(false)}
-                      className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors"
+                      className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                       aria-label="Close"
                     >
                       <X className="size-4" />
@@ -1084,6 +1578,184 @@ export function TeacherAttendanceHome() {
                     </CardHeader>
                     <CardContent>{renderLeaveForm()}</CardContent>
                   </Card>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
+      {/* "You are late, sir!" Warning Popup Card */}
+      {typeof document !== "undefined" &&
+        createPortal(
+          <AnimatePresence>
+            {lateWarningModalOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => !punching && setLateWarningModalOpen(false)}
+                  className="fixed inset-0 bg-black/70 backdrop-blur-md"
+                />
+
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.94, y: 12 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.94, y: 12 }}
+                  transition={{ duration: 0.2 }}
+                  className="relative z-10 w-full max-w-md"
+                >
+                  <Card className="relative overflow-hidden border-amber-500/40 shadow-2xl shadow-amber-950/20 dark:border-amber-500/40 dark:bg-zinc-950">
+                    {/* Top ambient amber glow strip */}
+                    <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500" />
+
+                    {/* Top Right Close Button */}
+                    <button
+                      type="button"
+                      disabled={punching}
+                      onClick={() => setLateWarningModalOpen(false)}
+                      className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
+                      aria-label="Close"
+                    >
+                      <X className="size-4" />
+                    </button>
+
+                    <CardHeader className="pb-3 pr-12 pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-500 shadow-inner">
+                          <AlertTriangle className="size-6 animate-pulse" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-lg font-black text-amber-600 dark:text-amber-400 tracking-tight">
+                            You are late, sir!
+                          </CardTitle>
+                          <CardDescription className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                            Morning School Arrival Cutoff Exceeded
+                          </CardDescription>
+                        </div>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="space-y-4 pt-1">
+                      {/* Breakdown card */}
+                      <div className="rounded-2xl border border-amber-500/20 bg-amber-50/60 dark:bg-amber-950/20 p-3.5 space-y-2.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-zinc-600 dark:text-zinc-400">Scheduled Cutoff:</span>
+                          <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-900 px-2 py-0.5 rounded-md border border-zinc-200 dark:border-white/10">
+                            {lateCheckData?.cutoffFormatted || "09:00 AM"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-zinc-600 dark:text-zinc-400">Your Current Time:</span>
+                          <span className="font-mono font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                            {lateCheckData?.currentFormatted}
+                          </span>
+                        </div>
+                        {lateCheckData?.minutesLate ? (
+                          <div className="flex items-center justify-between">
+                            <span className="text-zinc-600 dark:text-zinc-400">Delayed By:</span>
+                            <span className="font-bold text-red-600 dark:text-red-400">
+                              +{lateCheckData.minutesLate} minutes late
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        School rules require daily check-in before the morning cutoff. Punching in now will record your attendance as <strong className="text-amber-600 dark:text-amber-400">Late Arrival</strong> in official school administration records.
+                      </p>
+
+                      {/* Check-In Button inside late card */}
+                      <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+                        <Button
+                          type="button"
+                          disabled={punching}
+                          onClick={() => void executePunchIn()}
+                          className="w-full sm:flex-1 h-10 rounded-xl font-bold text-xs bg-amber-600 hover:bg-amber-500 text-white shadow-md shadow-amber-600/25 gap-2 cursor-pointer transition-all active:scale-[0.98]"
+                        >
+                          {punching ? (
+                            <>
+                              <Loader2 className="size-4 animate-spin" />
+                              <span>Verifying & Checking In…</span>
+                            </>
+                          ) : (
+                            <>
+                              <LogIn className="size-4" />
+                              <span>Check In as Late (Confirm)</span>
+                            </>
+                          )}
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={punching}
+                          onClick={() => setLateWarningModalOpen(false)}
+                          className="w-full sm:w-auto h-10 rounded-xl text-xs font-semibold border-zinc-200 dark:border-white/10"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
+      {/* Emergency Leave / On-Duty Departure Modal */}
+      {mounted &&
+        createPortal(
+          <AnimatePresence>
+            {emergencyModalOpen && (
+              <div className="fixed inset-0 z-[9999] flex flex-col justify-end sm:justify-center sm:items-center sm:p-4">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                  onClick={() => !submittingEmergency && setEmergencyModalOpen(false)}
+                />
+
+                <motion.div
+                  initial={{ y: "100%", opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: "100%", opacity: 0 }}
+                  transition={{ type: "spring", damping: 28, stiffness: 280 }}
+                  className="relative z-10 w-full max-w-lg overflow-hidden rounded-t-[28px] sm:rounded-2xl border-t sm:border border-zinc-200 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-950 sm:dark:bg-zinc-900 flex flex-col max-h-[90dvh] sm:max-h-[90vh]"
+                >
+                  {/* Drag handle pill on mobile */}
+                  <div className="sm:hidden mx-auto mt-3 mb-1 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+
+                  <div className="flex items-center justify-between border-b border-zinc-100 p-4 dark:border-white/10 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                        <Briefcase className="size-4" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
+                          Emergency Leave / On-Duty Departure
+                        </h3>
+                        <p className="text-[11px] text-zinc-500">
+                          Leaving school campus after morning punch-in
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={submittingEmergency}
+                      onClick={() => setEmergencyModalOpen(false)}
+                      className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-900 dark:hover:bg-white/10 dark:hover:text-zinc-100 transition-colors cursor-pointer"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+
+                  {renderEmergencyForm(false)}
                 </motion.div>
               </div>
             )}

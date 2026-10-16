@@ -93,6 +93,14 @@ export function AppDatePicker({
   const [isMobile, setIsMobile] = React.useState(false);
 
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const popoverRef = React.useRef<HTMLDivElement>(null);
+
+  const [popoverCoords, setPopoverCoords] = React.useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    width: number;
+  }>({ left: 0, width: 288 });
 
   // Month & Year currently being browsed in calendar view
   const currentParsed = React.useMemo(() => parseIso(value), [value]);
@@ -114,6 +122,56 @@ export function AppDatePicker({
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
+  const updatePosition = React.useCallback(() => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const vw = window.innerWidth;
+    const popoverWidth = Math.max(288, rect.width);
+    const popoverHeight = 345;
+
+    const spaceBelow = vh - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    // Auto-detect if opening upward is better (e.g. Near bottom of card or modal)
+    const openUpward = spaceBelow < popoverHeight && spaceAbove > spaceBelow;
+
+    let left = align === "right" ? rect.right - popoverWidth : rect.left;
+    if (left + popoverWidth > vw - 12) {
+      left = vw - popoverWidth - 12;
+    }
+    if (left < 12) {
+      left = 12;
+    }
+
+    if (openUpward) {
+      setPopoverCoords({
+        bottom: vh - rect.top + 6,
+        left,
+        width: popoverWidth,
+      });
+    } else {
+      setPopoverCoords({
+        top: rect.bottom + 6,
+        left,
+        width: popoverWidth,
+      });
+    }
+  }, [align]);
+
+  React.useEffect(() => {
+    if (!isOpen || isMobile) return;
+    updatePosition();
+    const handleScrollOrResize = () => {
+      updatePosition();
+    };
+    window.addEventListener("resize", handleScrollOrResize);
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    return () => {
+      window.removeEventListener("resize", handleScrollOrResize);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+    };
+  }, [isOpen, isMobile, updatePosition]);
+
   // Update view month when value changes or calendar opens
   React.useEffect(() => {
     if (value) {
@@ -127,7 +185,13 @@ export function AppDatePicker({
   React.useEffect(() => {
     if (!isOpen || isMobile) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        popoverRef.current &&
+        !popoverRef.current.contains(target)
+      ) {
         setIsOpen(false);
       }
     };
@@ -339,17 +403,30 @@ export function AppDatePicker({
         <CalendarIcon className="size-4 shrink-0 text-zinc-400" />
       </button>
 
-      {/* DESKTOP POPOVER (screen width >= 640px) */}
-      {!isMobile && isOpen && (
-        <div
-          className={cn(
-            "absolute z-[100] mt-1.5 w-72 rounded-2xl border border-zinc-200/90 bg-white p-3.5 shadow-2xl dark:border-white/10 dark:bg-zinc-950 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md",
-            align === "right" ? "right-0" : "left-0"
-          )}
-        >
-          {renderCalendarBody()}
-        </div>
-      )}
+      {/* DESKTOP POPOVER (screen width >= 640px) portaled to document.body */}
+      {!isMobile &&
+        isOpen &&
+        mounted &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            style={{
+              position: "fixed",
+              top: popoverCoords.top !== undefined ? `${popoverCoords.top}px` : undefined,
+              bottom: popoverCoords.bottom !== undefined ? `${popoverCoords.bottom}px` : undefined,
+              left: `${popoverCoords.left}px`,
+              width: `${popoverCoords.width}px`,
+              zIndex: 100100,
+            }}
+            className={cn(
+              "z-[100100] rounded-2xl border border-zinc-200/90 bg-white p-3.5 shadow-2xl dark:border-white/10 dark:bg-zinc-950 backdrop-blur-md animate-in fade-in zoom-in-95 duration-150"
+            )}
+          >
+            {renderCalendarBody()}
+          </div>,
+          document.body
+        )}
 
       {/* MOBILE BOTTOM SHEET DRAWER (screen width < 640px) */}
       {isMobile &&
@@ -357,7 +434,7 @@ export function AppDatePicker({
         createPortal(
           <AnimatePresence>
             {isOpen && (
-              <div className="fixed inset-0 z-[10050] flex flex-col justify-end">
+              <div className="fixed inset-0 z-[100500] flex flex-col justify-end">
                 {/* Backdrop */}
                 <motion.div
                   initial={{ opacity: 0 }}

@@ -8,6 +8,7 @@ import { DashboardSidebar } from "@/components/client/dashboard-sidebar";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
 import { NotificationsDropdown } from "@/components/client/notifications-dropdown";
 import { UserAccountDropdown } from "@/components/client/user-account-dropdown";
+import { Separator } from "@/components/ui/separator";
 
 export function DashboardChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -38,8 +39,11 @@ export function DashboardChrome({ children }: { children: React.ReactNode }) {
     });
   };
 
-  // During onboarding, provide full-screen immersive view without sidebar distractions
-  if (pathname?.startsWith("/dashboard/onboarding")) {
+  // During onboarding or waiting approval, provide full-screen immersive view without sidebar distractions
+  if (
+    pathname?.startsWith("/dashboard/onboarding") ||
+    pathname?.startsWith("/dashboard/waiting-approval")
+  ) {
     return (
       <div className="min-h-screen w-full bg-background text-foreground overflow-y-auto">
         {children}
@@ -57,27 +61,30 @@ export function DashboardChrome({ children }: { children: React.ReactNode }) {
       />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Mobile-only menu bar (drawer toggle on phones; profile & notifications on right) */}
-        <div className="flex h-14 flex-shrink-0 items-center justify-between border-b border-zinc-200/80 bg-background/90 px-3 backdrop-blur-md dark:border-white/10 md:hidden z-30">
-          <div className="flex items-center gap-2 min-w-0">
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              type="button"
-              className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200/90 bg-white/80 text-foreground dark:border-white/10 dark:bg-white/5 shadow-2xs hover:border-zinc-300 dark:hover:border-white/20 transition-colors cursor-pointer"
-              aria-label="Open menu"
-              onClick={() => setMobileOpen(true)}
-            >
-              <Menu className="size-5" />
-            </motion.button>
-          </div>
+        <div className="flex flex-col flex-shrink-0 md:hidden z-30">
+          <div className="flex h-14 items-center justify-between bg-background/90 px-3 backdrop-blur-md">
+            <div className="flex items-center gap-2 min-w-0">
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                type="button"
+                className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200/90 bg-white/80 text-foreground dark:border-white/10 dark:bg-white/5 shadow-2xs hover:border-zinc-300 dark:hover:border-white/20 transition-colors cursor-pointer"
+                aria-label="Open menu"
+                onClick={() => setMobileOpen(true)}
+              >
+                <Menu className="size-5" />
+              </motion.button>
+            </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
-            <NotificationsDropdown />
-            {loading ? (
-              <div className="h-8 w-16 animate-pulse rounded-full bg-zinc-200 dark:bg-white/10" />
-            ) : user ? (
-              <UserAccountDropdown user={user} />
-            ) : null}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <NotificationsDropdown />
+              {loading ? (
+                <div className="h-8 w-16 animate-pulse rounded-full bg-zinc-200 dark:bg-white/10" />
+              ) : user ? (
+                <UserAccountDropdown user={user} />
+              ) : null}
+            </div>
           </div>
+          <Separator />
         </div>
 
         {/* Dashboard main page content starts directly from the top on desktop */}

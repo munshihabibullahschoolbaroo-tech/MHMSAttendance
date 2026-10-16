@@ -4,6 +4,9 @@ import { adminDb } from "@/lib/firebase/admin";
 import { getSchoolConfig } from "@/lib/school/config";
 import { getDayKeyFromDate, getIanaTimeZone } from "@/lib/date/timezone";
 import { jsonError } from "@/lib/api/json-error";
+import { FieldValue } from "firebase-admin/firestore";
+import { calculateCasualLeaveQuota } from "@/lib/school/leave-quota";
+import { extractFirstActiveDateKey } from "@/lib/attendance/user-first-active";
 
 export const runtime = "nodejs";
 
@@ -63,17 +66,17 @@ export async function GET(req: Request) {
     }
   }
 
-  // Count casual leaves used this month
-  const monthPrefix = dateKey.slice(0, 7); // YYYY-MM
-  const monthLeavesSnap = await db
+  // Count casual leaves used this calendar year and calculate monthly quota with rollover
+  const currentYear = dateKey.slice(0, 4); // "YYYY"
+  const allCasualLeavesSnap = await db
     .collection("leaveRequests")
     .where("teacherId", "==", auth.decoded.uid)
     .where("type", "==", "casual")
     .where("status", "in", ["approved", "pending"])
     .get();
 
-  const usedCasualDates = new Set<string>();
-  monthLeavesSnap.forEach((doc) => {
+  const allTeacherCasualDates = new Set<string>();
+  allCasualLeavesSnap.forEach((doc) => {
     const d = doc.data();
     const startStr = String(d.startDate ?? "");
     const endStr = String(d.endDate ?? startStr);
@@ -85,17 +88,27 @@ export async function GET(req: Request) {
         const mm = String(curr.getUTCMonth() + 1).padStart(2, "0");
         const dd = String(curr.getUTCDate()).padStart(2, "0");
         const dateStr = `${yyyy}-${mm}-${dd}`;
-        if (dateStr.startsWith(monthPrefix)) {
-          usedCasualDates.add(dateStr);
+        if (dateStr.startsWith(currentYear)) {
+          allTeacherCasualDates.add(dateStr);
         }
         curr.setUTCDate(curr.getUTCDate() + 1);
       }
-    } else if (startStr.startsWith(monthPrefix)) {
-      usedCasualDates.add(startStr);
+    } else if (startStr.startsWith(currentYear)) {
+      allTeacherCasualDates.add(startStr);
     }
   });
 
-  const casualLeavesThisMonth = usedCasualDates.size;
+  const firstActiveDateKey = extractFirstActiveDateKey(userData, sessionSnap.exists ? dateKey : null, timeZone);
+
+  // If user doc doesn't have firstLoginAt recorded yet, record it now
+  if (!userData.firstLoginAt && !userData.createdAt) {
+    db.collection("users")
+      .doc(auth.decoded.uid)
+      .set({ firstLoginAt: FieldValue.serverTimestamp() }, { merge: true })
+      .catch(() => {});
+  }
+
+  const casualQuota = calculateCasualLeaveQuota(dateKey, allTeacherCasualDates, firstActiveDateKey);
 
   return NextResponse.json({
     date: dateKey,
@@ -105,6 +118,7 @@ export async function GET(req: Request) {
       latitude: config.latitude,
       longitude: config.longitude,
       radiusMeters: config.radiusMeters,
+      teacherLateTime: config.teacherLateTime || "09:00 AM",
     },
     teacher: {
       name: userData.name ?? auth.decoded.email?.split("@")[0] ?? "Teacher",
@@ -115,10 +129,34 @@ export async function GET(req: Request) {
       isClassTeacher: userData.isClassTeacher === true,
       schoolClassId: userData.schoolClassId ?? null,
       schoolSectionId: userData.schoolSectionId ?? null,
-      casualLeavesThisMonth,
-      maxCasualLeavesAllowed: 2,
+      firstActiveDate: firstActiveDateKey,
+      casualLeavesThisMonth: casualQuota.usedThisMonth,
+      maxCasualLeavesAllowed: casualQuota.maxCasualLeavesAllowed,
+      carriedForwardCasualLeaves: casualQuota.carriedForward,
+      remainingCasualLeaves: casualQuota.remainingCasualLeaves,
     },
-    session: sessionSnap.exists ? sessionSnap.data() : null,
+    session: sessionSnap.exists
+      ? (() => {
+          const s = sessionSnap.data() ?? {};
+          return {
+            ...s,
+            checkInTime: s.checkInTime?.toDate
+              ? s.checkInTime.toDate().toISOString()
+              : s.checkInTime?.seconds
+              ? new Date(s.checkInTime.seconds * 1000).toISOString()
+              : s.checkInTime?._seconds
+              ? new Date(s.checkInTime._seconds * 1000).toISOString()
+              : s.checkInTime,
+            checkOutTime: s.checkOutTime?.toDate
+              ? s.checkOutTime.toDate().toISOString()
+              : s.checkOutTime?.seconds
+              ? new Date(s.checkOutTime.seconds * 1000).toISOString()
+              : s.checkOutTime?._seconds
+              ? new Date(s.checkOutTime._seconds * 1000).toISOString()
+              : s.checkOutTime,
+          };
+        })()
+      : null,
     isCheckedIn: sessionSnap.exists && !!sessionSnap.get("checkInTime"),
     isCheckedOut: sessionSnap.exists && !!sessionSnap.get("checkOutTime"),
     leave: activeLeave,

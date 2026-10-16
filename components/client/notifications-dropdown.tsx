@@ -11,6 +11,7 @@ import { getFirebaseAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import { NotificationsListSkeleton } from "@/components/client/dashboard-skeletons";
 import { workCheckInHrefFromAssignedSiteIds } from "@/lib/client/work-assignment-href";
+import { Separator } from "@/components/ui/separator";
 
 /** Synthesizes a soft bell ding via Web Audio API — no audio file required. */
 function playNotificationSound() {
@@ -191,7 +192,7 @@ export function NotificationsDropdown() {
           sideOffset={8}
           align="end"
         >
-          <div className="flex shrink-0 items-center justify-between border-b border-zinc-200/80 px-4 py-3 dark:border-white/10">
+          <div className="flex shrink-0 items-center justify-between px-4 py-3">
             <span className="text-sm font-semibold">Notifications</span>
             {unread > 0 ? (
               <button
@@ -203,6 +204,7 @@ export function NotificationsDropdown() {
               </button>
             ) : null}
           </div>
+          <Separator />
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {loading && items.length === 0 ? (
               <NotificationsListSkeleton rows={5} />
@@ -280,7 +282,8 @@ export function NotificationsDropdown() {
             )}
           </div>
           {/* View all footer */}
-          <div className="shrink-0 border-t border-zinc-200/80 px-4 py-2.5 dark:border-white/10">
+          <Separator />
+          <div className="shrink-0 px-4 py-2.5">
             <Link
               href="/dashboard/employee/notifications"
               className="flex items-center justify-center gap-1.5 text-xs font-medium text-cyan-600 hover:text-cyan-700 dark:text-cyan-400 dark:hover:text-cyan-300"

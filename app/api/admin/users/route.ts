@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase/admin";
+import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { requireBearerUser } from "@/lib/auth/verify-request";
 import { jsonError } from "@/lib/api/json-error";
 import { isRequestAdmin } from "@/lib/auth/require-admin";
@@ -8,11 +8,9 @@ import { normalizeTimeZoneId } from "@/lib/date/time-zone";
 import { DEFAULT_SCHOOL_TIME_ZONE, getDayKeyFromDate } from "@/lib/date/timezone";
 import { claimEmployeeId } from "@/lib/employee-id/allocator";
 
-export const runtime = "nodejs";
+import { getUsersCache, setUsersCache } from "@/lib/server/users-cache";
 
-// In-memory cache for the full users list — 2 min TTL
-const CACHE_TTL_MS = 2 * 60_000;
-let usersCache: { users: unknown[]; expiresAt: number } | null = null;
+export const runtime = "nodejs";
 
 export async function GET(req: Request) {
   const auth = await requireBearerUser(req);
@@ -24,12 +22,13 @@ export async function GET(req: Request) {
   }
 
   const skipCache = new URL(req.url).searchParams.get("fresh") === "1";
+  const cachedUsers = getUsersCache();
 
-  if (!skipCache && usersCache && usersCache.expiresAt > Date.now()) {
+  if (!skipCache && cachedUsers) {
     const isSuperAdmin = isSuperAdminDecoded(decoded);
     const users = isSuperAdmin
-      ? usersCache.users
-      : (usersCache.users as Array<{ email: string; role: string }>).filter(
+      ? cachedUsers
+      : (cachedUsers as Array<{ email: string; role: string }>).filter(
           (u) => !isSuperAdminUserRow(u.email, u.role)
         );
     return NextResponse.json({ users });
@@ -72,6 +71,30 @@ export async function GET(req: Request) {
     const usersRaw = await Promise.all(
       snap.docs.map(async (d: any) => {
         const data = d.data();
+        let name = typeof data.name === "string" ? data.name.trim() : "";
+        let email = typeof data.email === "string" ? data.email.trim() : "";
+
+        // If doc has no name and no email, attempt to recover from Firebase Auth
+        if (!name && !email) {
+          try {
+            const authRecord = await adminAuth().getUser(d.id);
+            if (authRecord?.email) {
+              email = authRecord.email;
+              name = authRecord.displayName?.trim() || email.split("@")[0] || "Staff Member";
+              await d.ref.set({ email, name }, { merge: true });
+            }
+          } catch {
+            // No Firebase Auth record exists for this ID; delete the orphaned doc
+            await d.ref.delete().catch(() => {});
+            return null;
+          }
+        }
+
+        // If still completely nameless and email-less, do not display ghost user
+        if (!name && !email) {
+          return null;
+        }
+
         const role = typeof data.role === "string" ? data.role : "employee";
         let employeeId = typeof data.employeeId === "string" ? data.employeeId.trim() : "";
         // Backfill missing employee IDs for legacy employee accounts.
@@ -85,8 +108,9 @@ export async function GET(req: Request) {
         return {
           id: d.id,
           employeeId,
-          name: typeof data.name === "string" ? data.name : "",
-          email: typeof data.email === "string" ? data.email : "",
+          name,
+          email,
+          photoUrl: typeof data.photoUrl === "string" ? data.photoUrl : null,
           role,
           phone: typeof data.phone === "string" ? data.phone : null,
           schoolWingId: typeof data.schoolWingId === "string" ? data.schoolWingId : null,
@@ -119,11 +143,13 @@ export async function GET(req: Request) {
       })
     );
 
-    const allUsers = usersRaw.map((d: any) => ({ ...d }));
+    const allUsers = usersRaw
+      .filter((u): u is NonNullable<typeof u> => Boolean(u && (u.email || u.name)))
+      .map((d: any) => ({ ...d }));
     allUsers.sort((a: any, b: any) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
     // Store full list in cache; filter per-request based on caller's role
-    usersCache = { users: allUsers, expiresAt: Date.now() + CACHE_TTL_MS };
+    setUsersCache(allUsers);
 
     const users = isSuperAdminDecoded(decoded)
       ? allUsers
@@ -132,12 +158,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ users });
   } catch {
     // Quota exceeded or Firestore unavailable — serve stale cache if available
-    const stale = usersCache;
+    const stale = getUsersCache();
     if (stale) {
       const isSuperAdmin = isSuperAdminDecoded(decoded);
       const users = isSuperAdmin
-        ? stale.users
-        : (stale.users as Array<{ email: string; role: string }>).filter(
+        ? stale
+        : (stale as Array<{ email: string; role: string }>).filter(
             (u) => !isSuperAdminUserRow(u.email, u.role)
           );
       return NextResponse.json({ users });

@@ -14,6 +14,8 @@ type Props = {
   showLogo?: boolean;
   /** Show “by Constcode” under the product name (off for tight inline links). */
   showVendor?: boolean;
+  /** Hide text (MHMSAttendance and address) on mobile, showing only the logo mark. */
+  hideTextOnMobile?: boolean;
 };
 
 /**
@@ -24,6 +26,7 @@ export function MtesBrandLockup({
   className,
   showLogo = true,
   showVendor = true,
+  hideTextOnMobile = false,
 }: Props) {
   const isHero = variant === "hero";
   const isSidebar = variant === "sidebar";
@@ -53,9 +56,9 @@ export function MtesBrandLockup({
     </span>
   );
 
-  /** Hero: centered stack. Nav (header/sidebar/inline): “by Constcode” flush under the end of “Attandance”. */
-  const navStack = !isHero;
-  const isLeftAligned = !showLogo && isHeader;
+  /** Hero: centered stack. Nav (header/sidebar): clean left alignment next to mark. */
+  const isLeftAligned = isHeader || isSidebar;
+  const navStack = !isHero && !isLeftAligned;
   const byline = showVendor ? (
     <p className={cn(byClass, isLeftAligned ? "text-left" : navStack ? "text-right" : "text-center")}>{APP_VENDOR}</p>
   ) : null;
@@ -88,9 +91,14 @@ export function MtesBrandLockup({
     return (
       <div className={cn("flex min-w-0 items-center gap-2.5 md:gap-3", className)}>
         {showLogo ? (
-          <MhmsMark className="h-10 w-10 shrink-0 md:h-[3.35rem] md:w-[3.35rem]" />
+          <MhmsMark className="h-9 w-9 shrink-0 sm:h-10 sm:w-10 md:h-11 md:w-11" />
         ) : null}
-        <div className="min-w-0">{stackedTitle}</div>
+        <div
+          suppressHydrationWarning
+          className={cn("min-w-0", hideTextOnMobile && "hidden sm:block")}
+        >
+          {stackedTitle}
+        </div>
       </div>
     );
   }
@@ -120,13 +128,19 @@ export function MtesBrandLockup({
 export function MtesBrandHeaderLink({
   className,
   showLogo = true,
+  hideTextOnMobile = true,
 }: {
   className?: string;
   showLogo?: boolean;
+  hideTextOnMobile?: boolean;
 }) {
   return (
     <Link href="/" className={cn("min-w-0 shrink hover:opacity-90", className)}>
-      <MtesBrandLockup variant="header" showLogo={showLogo} />
+      <MtesBrandLockup
+        variant="header"
+        showLogo={showLogo}
+        hideTextOnMobile={hideTextOnMobile}
+      />
     </Link>
   );
 }

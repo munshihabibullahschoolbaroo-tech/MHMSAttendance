@@ -134,7 +134,7 @@ export const DateField = React.forwardRef<HTMLInputElement, DateFieldProps>(
             sideOffset={8}
             onOpenAutoFocus={(e) => e.preventDefault()}
             className={cn(
-              "z-[1200] w-[min(calc(100vw-1rem),20rem)] max-w-[min(calc(100vw-1rem),20rem)] border-0 bg-transparent p-0 shadow-none",
+              "z-[100100] w-[min(calc(100vw-1rem),20rem)] max-w-[min(calc(100vw-1rem),20rem)] border-0 bg-transparent p-0 shadow-none",
               "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
             )}
           >

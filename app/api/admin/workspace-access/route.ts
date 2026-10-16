@@ -6,6 +6,7 @@ import { requireBearerUser } from "@/lib/auth/verify-request";
 import { jsonError } from "@/lib/api/json-error";
 import { assertAdmin } from "@/lib/auth/assert-admin";
 import { createNotification } from "@/lib/notifications/create-notification";
+import { invalidateUsersCache } from "@/lib/server/users-cache";
 
 export const runtime = "nodejs";
 
@@ -79,5 +80,6 @@ export async function POST(req: Request) {
     /* non-critical */
   }
 
+  invalidateUsersCache();
   return NextResponse.json({ ok: true, status, workerLabel: label });
 }

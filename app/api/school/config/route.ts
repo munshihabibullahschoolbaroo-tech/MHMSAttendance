@@ -17,6 +17,7 @@ const updateSchema = z.object({
   wings: z.array(z.any()).optional(),
   sections: z.array(z.string()).optional(),
   classSections: z.record(z.string(), z.array(z.string())).optional(),
+  teacherLateTime: z.string().optional(),
 });
 
 /** GET /api/school/config - Returns current school configuration */

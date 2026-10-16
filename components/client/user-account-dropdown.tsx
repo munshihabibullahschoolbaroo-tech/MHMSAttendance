@@ -5,7 +5,7 @@ import Link from "next/link";
 import { signOut } from "firebase/auth";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown, LogOut, Settings } from "lucide-react";
-import { nameToInitials } from "@/lib/profile/initials";
+import { UserAvatar } from "@/components/client/user-avatar";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import type { DashboardUser } from "@/components/client/dashboard-user-context";
@@ -26,21 +26,19 @@ export function UserAccountDropdown({
         <button
           type="button"
           className={cn(
-            "flex max-w-[min(50vw,220px)] items-center gap-2 rounded-full border border-zinc-200/90 bg-white/90 py-1 transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
-            hideAvatar ? "px-3.5 py-1.5" : "pl-1 pr-2",
+            "flex max-w-[min(50vw,240px)] items-center gap-2 rounded-full border border-zinc-200/90 bg-white/90 py-1 transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
+            hideAvatar ? "px-3.5 py-1.5" : "pl-1 pr-2.5",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
           )}
           aria-label="Account menu"
         >
           {!hideAvatar && (
-            <span
-              className={cn(
-                "flex size-9 shrink-0 items-center justify-center rounded-full",
-                "bg-gradient-to-br from-violet-600 to-cyan-500 text-xs font-semibold text-white"
-              )}
-            >
-              {nameToInitials(user.name)}
-            </span>
+            <UserAvatar
+              name={user.name}
+              photoUrl={user.photoUrl}
+              className="size-8 md:size-8.5 shrink-0"
+              textClassName="text-xs"
+            />
           )}
           <span className="min-w-0 flex-1 truncate text-left text-sm font-medium hidden md:inline-block">{user.name}</span>
           <span className="min-w-0 flex-1 truncate text-left text-sm font-medium md:hidden">{user.name.split(" ")[0]?.slice(0, 10)}</span>
@@ -62,7 +60,7 @@ export function UserAccountDropdown({
               Settings
             </Link>
           </DropdownMenu.Item>
-          <DropdownMenu.Separator className="my-1 h-px bg-zinc-200/90 dark:bg-white/10" />
+          <DropdownMenu.Separator className="my-1 h-px bg-gradient-to-r from-transparent via-zinc-300/80 to-transparent dark:via-white/15" />
           <DropdownMenu.Item
             className={cn(
               itemClass,

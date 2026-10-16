@@ -5,12 +5,12 @@ import * as React from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { getFirebaseAuth, getFirebaseDb } from "@/lib/firebase/client";
-import { nameToInitials } from "@/lib/profile/initials";
+import { UserAvatar } from "@/components/client/user-avatar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export function LandingHeaderActions() {
-  const [profile, setProfile] = React.useState<{ name: string } | null>(null);
+  const [profile, setProfile] = React.useState<{ name: string; photoUrl: string | null } | null>(null);
   const [ready, setReady] = React.useState(false);
 
   React.useEffect(() => {
@@ -24,15 +24,21 @@ export function LandingHeaderActions() {
       try {
         const db = getFirebaseDb();
         const snap = await getDoc(doc(db, "users", u.uid));
+        const data = snap.data();
         const name =
-          (snap.data()?.name as string) ||
+          (data?.name as string) ||
           u.displayName ||
           u.email?.split("@")[0] ||
           "User";
-        setProfile({ name });
+        const photoUrl =
+          (typeof data?.photoUrl === "string" && data.photoUrl ? data.photoUrl : null) ||
+          u.photoURL ||
+          null;
+        setProfile({ name, photoUrl });
       } catch {
         setProfile({
           name: u.displayName || u.email?.split("@")[0] || "User",
+          photoUrl: u.photoURL || null,
         });
       }
       setReady(true);
@@ -53,14 +59,12 @@ export function LandingHeaderActions() {
           "transition hover:bg-white/10"
         )}
       >
-        <span
-          className={cn(
-            "flex size-9 items-center justify-center rounded-full",
-            "bg-gradient-to-br from-violet-600 to-cyan-500 text-xs font-semibold text-white"
-          )}
-        >
-          {nameToInitials(profile.name)}
-        </span>
+        <UserAvatar
+          name={profile.name}
+          photoUrl={profile.photoUrl}
+          className="size-8.5 shrink-0"
+          textClassName="text-xs"
+        />
         <span className="max-w-[min(40vw,180px)] truncate text-sm font-medium text-foreground">
           {profile.name}
         </span>

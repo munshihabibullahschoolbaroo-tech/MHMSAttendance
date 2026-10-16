@@ -33,8 +33,22 @@ export async function POST(req: Request) {
 
   const tz = normalizeTimeZoneId(parsed.data.timeZone);
   const uid = auth.decoded.uid;
+  const userRef = adminDb().collection("users").doc(uid);
+  const snap = await userRef.get();
+  const existing = snap.data();
 
-  await adminDb().collection("users").doc(uid).set({ timeZone: tz }, { merge: true });
+  const patch: Record<string, unknown> = { timeZone: tz };
+  if (!snap.exists || !existing?.email) {
+    if (auth.decoded.email) patch.email = auth.decoded.email;
+    if (auth.decoded.name || auth.decoded.email) {
+      patch.name = auth.decoded.name || auth.decoded.email?.split("@")[0] || "User";
+    }
+    if (!existing?.role) {
+      patch.role = "employee";
+    }
+  }
+
+  await userRef.set(patch, { merge: true });
 
   return NextResponse.json({ ok: true, timeZone: tz });
 }

@@ -5,6 +5,7 @@ import { MONTHLY_REGULAR_CAP_HOURS } from "@/lib/attendance/month-hours-cap";
 import { buildWorkerDayDetail, type WorkerDayDetailResult } from "./worker-day-detail";
 import { type CalendarMode, bsMonthDays, bsIsoToAdIso } from "@/lib/date/bs-calendar";
 import { from24hUtc } from "@/lib/time/utc-12h";
+import { extractFirstActiveDateKey } from "@/lib/attendance/user-first-active";
 
 function hm24to12(hm: string): string {
   if (!hm || !/^\d{1,2}:\d{2}$/.test(hm.trim())) return hm;
@@ -94,7 +95,12 @@ function hoursFromMs(ms: number): number {
   return Math.max(0, ms) / 3_600_000;
 }
 
-function buildDayEntryRows(day: string, zone: string, data: WorkerDayDetailResult): DayEntryRow[] {
+function buildDayEntryRows(
+  day: string,
+  zone: string,
+  data: WorkerDayDetailResult,
+  firstActiveDate?: string | null
+): DayEntryRow[] {
   const dt = DateTime.fromISO(day, { zone });
   const isSunday = dt.isValid && dt.weekday === 7;
 
@@ -177,10 +183,11 @@ function buildDayEntryRows(day: string, zone: string, data: WorkerDayDetailResul
 
   const todayInZone = DateTime.now().setZone(zone).toISODate()!;
   const isFuture = day > todayInZone;
+  const isBeforeJoin = Boolean(firstActiveDate && day < firstActiveDate);
 
   if (rows.length === 0) {
     rows.push({
-      id: isFuture ? `${day}-unmarked` : `${day}-absent`,
+      id: isFuture || isBeforeJoin ? `${day}-unmarked` : `${day}-absent`,
       day,
       kind: "on_site",
       inTime: "—",
@@ -188,7 +195,7 @@ function buildDayEntryRows(day: string, zone: string, data: WorkerDayDetailResul
       dutyHours: 0,
       workPlace: "MHMS Main Campus",
       schedule: "—",
-      remark: isFuture ? "Unmarked" : "Absent",
+      remark: isFuture || isBeforeJoin ? "Unmarked" : "Absent",
     });
   }
   return rows;
@@ -208,6 +215,7 @@ export async function buildWorkerMonthWorkingHours(
 
   const userDoc = await db.collection("users").doc(workerId).get();
   const z = timeZoneFromUserSnapshot(userDoc);
+  const firstActiveDate = extractFirstActiveDateKey(userDoc.data(), null, z);
   const dayKeys: string[] = [];
 
   if (mode === "bs") {
@@ -252,7 +260,7 @@ export async function buildWorkerMonthWorkingHours(
     const dayKey = dayKeys[i]!;
     const detail = dayDetails[i]!;
     
-    const dayRows = buildDayEntryRows(dayKey, z, detail);
+    const dayRows = buildDayEntryRows(dayKey, z, detail, firstActiveDate);
 
     let regularSessionMs = 0;
     let approvedOvertimeMs = 0;

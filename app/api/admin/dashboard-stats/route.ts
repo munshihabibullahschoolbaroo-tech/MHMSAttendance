@@ -6,6 +6,8 @@ import { timeZoneFromUserSnapshot } from "@/lib/attendance/time-zone-from-snap";
 import { jsonError } from "@/lib/api/json-error";
 import { isRequestAdmin } from "@/lib/auth/require-admin";
 import { requireBearerUser } from "@/lib/auth/verify-request";
+import { getSchoolConfig } from "@/lib/school/config";
+import { parseAmTimeMinutes } from "@/lib/date/late-check";
 
 export const runtime = "nodejs";
 
@@ -38,7 +40,13 @@ export async function GET(req: Request) {
     (d) => d.checkIn != null && d.checkOut == null
   ).length;
 
-  const lateArrivals = attendanceDocs.filter((d) => {
+  const config = await getSchoolConfig(db);
+  const cutoffMinutes = parseAmTimeMinutes(config.teacherLateTime || "09:00 AM");
+  const cutoffHour = Math.floor(cutoffMinutes / 60);
+  const cutoffMinute = cutoffMinutes % 60;
+
+  const lateArrivals = attendanceDocs.filter((d: any) => {
+    if (d.isLate === true || d.lateArrival === true) return true;
     const t = d.checkIn?.time;
     if (!t) return false;
     const ms =
@@ -49,7 +57,7 @@ export async function GET(req: Request) {
           : null;
     if (ms == null) return false;
     const local = DateTime.fromMillis(ms, { zone: "utc" }).setZone(viewerTz);
-    return local.hour > 9 || (local.hour === 9 && local.minute >= 0);
+    return local.hour > cutoffHour || (local.hour === cutoffHour && local.minute > cutoffMinute);
   }).length;
 
   const activeWithinMs = 2 * 60 * 1000;

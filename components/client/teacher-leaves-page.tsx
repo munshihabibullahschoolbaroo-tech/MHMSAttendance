@@ -14,6 +14,8 @@ import {
   UploadCloud,
   ChevronRight,
   X,
+  FileText,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,8 +29,12 @@ import { Input, formFieldLabelClass } from "@/components/ui/input";
 import { AppDatePicker } from "@/components/ui/app-date-picker";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, resolveDocumentViewUrl } from "@/lib/utils";
+import { compressImageForUpload } from "@/lib/client/compress-image";
 import { motion, AnimatePresence } from "framer-motion";
+import { Separator } from "@/components/ui/separator";
+import { calculateCasualLeaveQuota } from "@/lib/school/leave-quota";
+import { useDashboardUser } from "@/components/client/dashboard-user-context";
 
 type LeaveRecord = {
   id: string;
@@ -38,12 +44,20 @@ type LeaveRecord = {
   reason: string;
   status: "pending" | "approved" | "rejected";
   documentUrl?: string;
+  documentUrls?: string[];
   reviewNotes?: string;
   reviewedAt?: string;
   createdAt?: { seconds: number };
 };
 
+type AttachedDoc = {
+  url: string;
+  name: string;
+  sizeFormatted?: string;
+};
+
 export function TeacherLeavesPage() {
+  const { user } = useDashboardUser();
   const [leaves, setLeaves] = React.useState<LeaveRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [openModal, setOpenModal] = React.useState(false);
@@ -58,7 +72,7 @@ export function TeacherLeavesPage() {
   const [startDate, setStartDate] = React.useState("");
   const [endDate, setEndDate] = React.useState("");
   const [reason, setReason] = React.useState("");
-  const [documentUrl, setDocumentUrl] = React.useState("");
+  const [documents, setDocuments] = React.useState<AttachedDoc[]>([]);
   const [uploadingDoc, setUploadingDoc] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -93,10 +107,12 @@ export function TeacherLeavesPage() {
 
   const requestedDaysCount = requestedDates.length;
 
-  // Count casual leaves used this month
-  const usedCasualDaysThisMonth = React.useMemo(() => {
-    const currentMonth = new Date().toISOString().slice(0, 7); // e.g. "2026-10"
-    const set = new Set<string>();
+  const userFirstActive = user?.firstLoginAt || user?.createdAt || user?.onboardingCompletedAt || null;
+
+  // Calculate casual leave quota with rollover / carry-forward from prior months starting from join month
+  const casualQuota = React.useMemo(() => {
+    const targetMonth = startDate ? startDate.slice(0, 7) : new Date().toISOString().slice(0, 7);
+    const dates = new Set<string>();
     leaves.forEach((l) => {
       if (l.type === "casual" && (l.status === "approved" || l.status === "pending")) {
         const d1 = new Date(l.startDate + "T00:00:00Z");
@@ -107,15 +123,18 @@ export function TeacherLeavesPage() {
             const y = cur.getUTCFullYear();
             const m = String(cur.getUTCMonth() + 1).padStart(2, "0");
             const d = String(cur.getUTCDate()).padStart(2, "0");
-            const iso = `${y}-${m}-${d}`;
-            if (iso.startsWith(currentMonth)) set.add(iso);
+            dates.add(`${y}-${m}-${d}`);
             cur.setUTCDate(cur.getUTCDate() + 1);
           }
         }
       }
     });
-    return set.size;
-  }, [leaves]);
+    return calculateCasualLeaveQuota(targetMonth, dates, userFirstActive);
+  }, [leaves, startDate, userFirstActive]);
+
+  const usedCasualDaysThisMonth = casualQuota.usedThisMonth;
+  const maxCasualLeavesAllowed = casualQuota.maxCasualLeavesAllowed;
+  const carriedForwardCasualLeaves = casualQuota.carriedForward;
 
   const fetchLeaves = React.useCallback(async () => {
     try {
@@ -142,12 +161,21 @@ export function TeacherLeavesPage() {
   }, [fetchLeaves]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
 
-    if (file.size > 8 * 1024 * 1024) {
-      toast.error("File size cannot exceed 8MB");
-      return;
+    const files = Array.from(fileList);
+    for (const f of files) {
+      const isImage = f.type.startsWith("image/") && !f.name.toLowerCase().endsWith(".pdf");
+      if (!isImage) {
+        toast.error(`"${f.name}" is not an image. Only photo/image files (JPG, PNG, WebP) are allowed.`);
+        e.target.value = "";
+        return;
+      }
+      if (f.size > 8 * 1024 * 1024) {
+        toast.error(`"${f.name}" exceeds the 8MB limit`);
+        return;
+      }
     }
 
     setUploadingDoc(true);
@@ -157,43 +185,88 @@ export function TeacherLeavesPage() {
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("category", "medical_certificate");
+      const uploadedList: AttachedDoc[] = [];
 
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
+      for (const file of files) {
+        // Optimize & compress image file client-side (reduces 3-8MB phone camera photos to ~35-85KB WebP)
+        const uploadFile = await compressImageForUpload(file);
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Failed to upload document");
+        const formData = new FormData();
+        formData.append("file", uploadFile);
+        formData.append("category", "medical_certificate");
 
-      setDocumentUrl(data.url);
-      toast.success("Medical document attached successfully!");
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error ?? `Failed to upload "${file.name}"`);
+
+        const sizeKb = Math.round(uploadFile.size / 1024);
+        uploadedList.push({
+          url: data.url,
+          name: file.name,
+          sizeFormatted: `${sizeKb} KB`,
+        });
+      }
+
+      setDocuments((prev) => [...prev, ...uploadedList]);
+      toast.success(
+        uploadedList.length === 1
+          ? "Medical photo attached successfully!"
+          : `${uploadedList.length} medical photos attached successfully!`
+      );
+      // Reset input value so user can upload more files or re-select
+      e.target.value = "";
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error uploading file");
+      toast.error(err instanceof Error ? err.message : "Error uploading file(s)");
     } finally {
       setUploadingDoc(false);
     }
   };
 
+  const removeDocument = async (indexToRemove: number) => {
+    const docToRemove = documents[indexToRemove];
+    setDocuments((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+    if (docToRemove?.url) {
+      try {
+        const auth = getFirebaseAuth();
+        const u = auth.currentUser;
+        if (u) {
+          const token = await u.getIdToken();
+          await fetch("/api/upload", {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ url: docToRemove.url }),
+          });
+        }
+      } catch (err) {
+        console.warn("Failed to delete blob from storage:", err);
+      }
+    }
+    toast.info("Document removed and deleted from storage");
+  };
+
   const handleSubmitLeave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (leaveType === "medical" && !documentUrl) {
-      toast.error("Please attach a doctor's certificate or prescription for medical leave.");
+    if (leaveType === "medical" && documents.length === 0) {
+      toast.error("Please attach at least one doctor's certificate or prescription for medical leave.");
       return;
     }
 
     if (leaveType === "casual") {
-      if (requestedDaysCount > 2) {
-        toast.error("Casual leave cannot exceed 2 days in a calendar month.");
+      if (requestedDaysCount > maxCasualLeavesAllowed) {
+        toast.error(`Casual leave cannot exceed ${maxCasualLeavesAllowed} day(s) for this month (including carried forward days).`);
         return;
       }
-      if (usedCasualDaysThisMonth + requestedDaysCount > 2) {
+      if (usedCasualDaysThisMonth + requestedDaysCount > maxCasualLeavesAllowed) {
         toast.error(
-          `Casual leave quota exceeded. You already have ${usedCasualDaysThisMonth} day(s) this month. Max 2 days allowed.`
+          `Casual leave quota exceeded. You already have ${usedCasualDaysThisMonth} day(s) this month. Max ${maxCasualLeavesAllowed} days allowed.`
         );
         return;
       }
@@ -206,6 +279,8 @@ export function TeacherLeavesPage() {
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
 
+      const docUrls = documents.map((d) => d.url);
+
       const res = await fetch("/api/school/leave", {
         method: "POST",
         headers: {
@@ -217,7 +292,8 @@ export function TeacherLeavesPage() {
           startDate,
           endDate,
           reason,
-          documentUrl: documentUrl || undefined,
+          documentUrl: docUrls[0] || undefined,
+          documentUrls: docUrls,
         }),
       });
 
@@ -227,7 +303,7 @@ export function TeacherLeavesPage() {
       toast.success("Leave application submitted to School Administration!");
       setOpenModal(false);
       setReason("");
-      setDocumentUrl("");
+      setDocuments([]);
       setStartDate("");
       setEndDate("");
       void fetchLeaves();
@@ -375,18 +451,28 @@ export function TeacherLeavesPage() {
                     {l.reason}
                   </p>
 
-                  {l.documentUrl && (
-                    <div>
-                      <a
-                        href={l.documentUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/20"
-                      >
-                        View Attached Certificate / Document ↗
-                      </a>
-                    </div>
-                  )}
+                  {(() => {
+                    const docs = (Array.isArray(l.documentUrls) && l.documentUrls.length > 0)
+                      ? l.documentUrls
+                      : (l.documentUrl ? [l.documentUrl] : []);
+                    if (docs.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        {docs.map((url, idx) => (
+                          <a
+                            key={url + idx}
+                            href={resolveDocumentViewUrl(url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/20"
+                          >
+                            <FileText className="size-3" />
+                            <span>{docs.length > 1 ? `Medical Doc ${idx + 1}` : "View Attached Certificate / Document"} ↗</span>
+                          </a>
+                        ))}
+                      </div>
+                    );
+                  })()}
 
                   {l.reviewNotes && (
                     <div className="p-2.5 rounded-xl bg-zinc-100 dark:bg-white/[0.04] text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-white/5">
@@ -431,7 +517,7 @@ export function TeacherLeavesPage() {
                     type="button"
                     onClick={() => setOpenModal(false)}
                     disabled={submitting}
-                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 cursor-pointer shadow-xs transition-colors disabled:opacity-50"
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors disabled:opacity-50"
                     aria-label="Close"
                   >
                     <X className="size-4" />
@@ -443,7 +529,7 @@ export function TeacherLeavesPage() {
                   </div>
 
               {/* Modal Header */}
-              <div className="px-5 py-3 pr-14 border-b border-zinc-100 dark:border-white/5">
+              <div className="px-5 py-3 pr-14">
                 <div>
                   <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
                     Apply for Leave
@@ -453,6 +539,7 @@ export function TeacherLeavesPage() {
                   </p>
                 </div>
               </div>
+              <Separator />
 
               {/* Scrollable Form Body (keyboard safe) */}
               <div className="flex-1 overflow-y-auto px-5 py-4 overscroll-contain">
@@ -513,9 +600,9 @@ export function TeacherLeavesPage() {
                   {requestedDaysCount > 0 && (
                     <div
                       className={cn(
-                        "rounded-xl p-3 text-xs border space-y-1",
+                        "rounded-xl p-3 text-xs border space-y-1.5",
                         leaveType === "casual" &&
-                          (requestedDaysCount > 2 || usedCasualDaysThisMonth + requestedDaysCount > 2)
+                          (requestedDaysCount > maxCasualLeavesAllowed || usedCasualDaysThisMonth + requestedDaysCount > maxCasualLeavesAllowed)
                           ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400"
                           : "border-blue-500/20 bg-blue-500/10 text-blue-800 dark:text-blue-300"
                       )}
@@ -524,20 +611,25 @@ export function TeacherLeavesPage() {
                         <span>Requested: {requestedDaysCount} calendar day(s)</span>
                         {leaveType === "casual" && (
                           <span>
-                            Monthly Quota: {usedCasualDaysThisMonth}/2 used
+                            Monthly Quota: {usedCasualDaysThisMonth}/{maxCasualLeavesAllowed} used
                           </span>
                         )}
                       </div>
-                      {leaveType === "casual" && requestedDaysCount > 2 && (
+                      {leaveType === "casual" && carriedForwardCasualLeaves > 0 && (
+                        <p className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                          ✨ 2 regular + {carriedForwardCasualLeaves} carried forward from prior months = {maxCasualLeavesAllowed} days available
+                        </p>
+                      )}
+                      {leaveType === "casual" && requestedDaysCount > maxCasualLeavesAllowed && (
                         <p className="text-[11px] font-medium text-red-600 dark:text-red-400">
-                          ⚠️ Casual leave is restricted to a maximum of 2 days in a calendar month.
+                          ⚠️ Casual leave is restricted to a maximum of {maxCasualLeavesAllowed} day(s) for this month.
                         </p>
                       )}
                       {leaveType === "casual" &&
-                        requestedDaysCount <= 2 &&
-                        usedCasualDaysThisMonth + requestedDaysCount > 2 && (
+                        requestedDaysCount <= maxCasualLeavesAllowed &&
+                        usedCasualDaysThisMonth + requestedDaysCount > maxCasualLeavesAllowed && (
                           <p className="text-[11px] font-medium text-red-600 dark:text-red-400">
-                            ⚠️ Exceeds quota: You have already used {usedCasualDaysThisMonth} casual day(s) this month.
+                            ⚠️ Exceeds quota: You have already used {usedCasualDaysThisMonth} casual day(s) this month (maximum {maxCasualLeavesAllowed} allowed).
                           </p>
                         )}
                     </div>
@@ -556,32 +648,93 @@ export function TeacherLeavesPage() {
                   </label>
 
                   {leaveType === "medical" && (
-                    <label className="flex flex-col gap-1 text-xs">
-                      <span className={formFieldLabelClass}>
-                        Medical Certificate / Prescription (PDF or Image)
-                      </span>
+                    <div className="flex flex-col gap-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className={formFieldLabelClass}>
+                          Medical Certificate / Prescription (Photos / Images only)
+                        </span>
+                        {documents.length > 0 && (
+                          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                            {documents.length} attached
+                          </span>
+                        )}
+                      </div>
+
                       <div className="flex items-center gap-2">
                         <Input
                           type="file"
-                          accept="image/*,application/pdf"
+                          multiple
+                          accept="image/jpeg,image/png,image/webp,image/jpg"
                           onChange={(e) => void handleFileUpload(e)}
                           disabled={uploadingDoc}
-                          className="text-xs"
+                          className="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-blue-950/40 dark:file:text-blue-300"
                         />
-                        {uploadingDoc && <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />}
+                        {uploadingDoc && (
+                          <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 shrink-0">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span className="text-[11px]">Optimizing & uploading...</span>
+                          </div>
+                        )}
                       </div>
-                      {documentUrl && (
-                        <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 font-semibold">
-                          ✓ Document attached successfully
-                        </p>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Upload doctor prescription, medical certificate or report photos (JPG, PNG, WebP). Ultra-compressed automatically.
+                      </p>
+
+                      {/* Attached Documents Preview & Remove List */}
+                      {documents.length > 0 && (
+                        <div className="space-y-1.5 pt-1">
+                          <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
+                            Attached Files ({documents.length}):
+                          </span>
+                          <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
+                            {documents.map((doc, idx) => (
+                              <div
+                                key={doc.url + idx}
+                                className="flex items-center justify-between gap-2 p-2 rounded-xl bg-zinc-100 dark:bg-white/[0.05] border border-zinc-200 dark:border-white/10 text-xs transition-colors"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <FileText className="size-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                                  <span className="truncate font-medium text-zinc-800 dark:text-zinc-200" title={doc.name}>
+                                    {doc.name}
+                                  </span>
+                                  {doc.sizeFormatted && (
+                                    <span className="shrink-0 text-[10px] text-zinc-400 font-mono">
+                                      ({doc.sizeFormatted})
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <a
+                                    href={resolveDocumentViewUrl(doc.url)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-0.5 rounded"
+                                  >
+                                    Preview
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeDocument(idx)}
+                                    className="p-1 rounded-md text-red-500 hover:bg-red-500/10 transition-colors cursor-pointer"
+                                    title="Remove document"
+                                    aria-label={`Remove ${doc.name}`}
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
-                    </label>
+                    </div>
                   )}
                 </form>
               </div>
 
               {/* Bottom Sticky Action Bar */}
-              <div className="px-5 py-3 border-t border-zinc-100 dark:border-white/5 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-end gap-2 pb-6 md:pb-3">
+              <Separator />
+              <div className="px-5 py-3 bg-zinc-50 dark:bg-zinc-900/50 flex items-center justify-end gap-2 pb-6 md:pb-3">
                 <Button
                   type="button"
                   variant="outline"
@@ -598,7 +751,7 @@ export function TeacherLeavesPage() {
                     submitting ||
                     uploadingDoc ||
                     (leaveType === "casual" &&
-                      (requestedDaysCount > 2 || usedCasualDaysThisMonth + requestedDaysCount > 2))
+                      (requestedDaysCount > maxCasualLeavesAllowed || usedCasualDaysThisMonth + requestedDaysCount > maxCasualLeavesAllowed))
                   }
                   className="gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl px-4"
                 >

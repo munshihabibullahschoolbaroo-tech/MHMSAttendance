@@ -8,6 +8,7 @@ import { haversineMeters } from "@/lib/geo/haversine";
 import { zonedWallClockToUtcMillis } from "@/lib/site/zoned-schedule";
 import { DEFAULT_CHECKOUT_GRACE_MINUTES } from "@/lib/site/work-window";
 import { from24hUtc } from "@/lib/time/utc-12h";
+import { extractFirstActiveDateKey } from "@/lib/attendance/user-first-active";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TRACK_PING_INTERVAL_MS = 45_000;
@@ -31,6 +32,21 @@ export type TimelineEvent =
       gps: unknown;
       isOvertime?: boolean;
       status?: string;
+      isLate?: boolean;
+      lateMinutes?: number;
+      cutoffTime?: string;
+      distanceM?: number;
+    }
+  | {
+      kind: "emergency_leave";
+      atMs: number;
+      type: "school_duty" | "emergency";
+      departureTime: string;
+      willReturn: boolean;
+      returnTime: string | null;
+      reason: string;
+      status: string;
+      assigneeAdminName?: string | null;
     }
   | {
       kind: "site_switch";
@@ -59,6 +75,7 @@ export type TimelineEvent =
       auto: boolean;
       isOvertime?: boolean;
       status?: string;
+      distanceM?: number;
     }
   | {
       kind: "offline_window";
@@ -389,6 +406,8 @@ export type WorkerDayDetailResult =
       } | null;
       overtime: OvertimeDayDetailRow[];
       offsite: OffsiteDayDetailRow[];
+      beforeEnrollment?: boolean;
+      firstActiveDate?: string | null;
     }
   | {
       ok: true;
@@ -445,6 +464,44 @@ export type WorkerDayDetailResult =
       };
       overtime: OvertimeDayDetailRow[];
       offsite: OffsiteDayDetailRow[];
+      teacherSession?: {
+        teacherName: string;
+        teacherEmail: string;
+        teacherPhone?: string | null;
+        designation?: string;
+        position?: string;
+        wingId?: string;
+        isClassTeacher?: boolean;
+        schoolClassId?: string | null;
+        schoolSectionId?: string | null;
+        isLate?: boolean;
+        lateArrival?: boolean;
+        lateMinutes?: number;
+        cutoffTime?: string;
+        checkInGps?: {
+          latitude: number;
+          longitude: number;
+          distanceM?: number;
+          accuracy?: number;
+        } | null;
+        checkOutGps?: {
+          latitude: number;
+          longitude: number;
+          distanceM?: number;
+          accuracy?: number;
+        } | null;
+        emergencyLeave?: {
+          active: boolean;
+          type: "school_duty" | "emergency";
+          departureTime: string;
+          willReturn: boolean;
+          returnTime?: string | null;
+          reason: string;
+          status: "pending" | "approved" | "rejected";
+          assigneeAdminUid?: string | null;
+          assigneeAdminName?: string | null;
+        } | null;
+      } | null;
     };
 
 export async function buildWorkerDayDetail(
@@ -515,6 +572,9 @@ export async function buildWorkerDayDetail(
   const hasTeacherSession = Boolean(teacherSessionSnap && teacherSessionSnap.exists);
   const tsData = hasTeacherSession ? (teacherSessionSnap!.data() ?? {}) : null;
 
+  const firstActiveDate = extractFirstActiveDateKey(userSnap.exists ? (userSnap.data() ?? {}) : null);
+  const beforeEnrollment = Boolean(firstActiveDate && day < firstActiveDate);
+
   if (!attSnap.exists && !hasTeacherSession) {
     return {
       ok: true,
@@ -525,39 +585,95 @@ export async function buildWorkerDayDetail(
       workerEmail,
       onLeave: approvedLeave !== null,
       leave: approvedLeave,
+      beforeEnrollment,
+      firstActiveDate,
       overtime,
       offsite,
     };
   }
 
-  // If attendance doesn't exist but teacherSessions does, synthesize check-in & check-out
-  if (!attSnap.exists && tsData) {
+  // If teacherSessions exists (canonical MHMS attendance store), build rich teacher session & timeline
+  if (tsData) {
     const checkInMs = timeToMs(tsData.checkInTime);
     const checkOutMs = timeToMs(tsData.checkOutTime);
+    const isToday = day === DateTime.now().setZone(DEFAULT_ATTENDANCE_TIME_ZONE).toISODate();
     const totalSessionMs =
       checkInMs != null && checkOutMs != null && checkOutMs >= checkInMs
         ? checkOutMs - checkInMs
+        : checkInMs != null && isToday
+        ? Math.max(0, Date.now() - checkInMs)
         : checkInMs != null
         ? 6.5 * 3600000
         : 0;
+
+    const isLate =
+      tsData.isLate === true ||
+      tsData.lateArrival === true ||
+      (typeof tsData.lateMinutes === "number" && tsData.lateMinutes > 0);
+
+    const timeline: TimelineEvent[] = [];
+
+    if (checkInMs) {
+      timeline.push({
+        kind: "check_in",
+        atMs: checkInMs,
+        siteId: "mhms_main_campus",
+        siteName: "Munshi Habibullah Mission School",
+        photoUrl: null,
+        gps: tsData.checkInGps ?? null,
+        isLate,
+        lateMinutes: typeof tsData.lateMinutes === "number" ? tsData.lateMinutes : undefined,
+        cutoffTime: typeof tsData.cutoffTime === "string" ? tsData.cutoffTime : "09:00 AM",
+        distanceM: typeof tsData.checkInGps?.distanceM === "number" ? tsData.checkInGps.distanceM : undefined,
+        status: isLate ? "Late Arrival" : "On-Time Arrival",
+      });
+    }
+
+    if (tsData.emergencyLeave && tsData.emergencyLeave.active) {
+      timeline.push({
+        kind: "emergency_leave",
+        atMs: checkInMs ? checkInMs + 60000 : Date.now(),
+        type: tsData.emergencyLeave.type ?? "school_duty",
+        departureTime: tsData.emergencyLeave.departureTime ?? "",
+        willReturn: tsData.emergencyLeave.willReturn === true,
+        returnTime: tsData.emergencyLeave.returnTime ?? null,
+        reason: tsData.emergencyLeave.reason ?? "",
+        status: tsData.emergencyLeave.status ?? "pending",
+        assigneeAdminName: tsData.emergencyLeave.assigneeAdminName ?? null,
+      });
+    }
+
+    if (checkOutMs) {
+      timeline.push({
+        kind: "check_out",
+        atMs: checkOutMs,
+        siteId: "mhms_main_campus",
+        siteName: "Munshi Habibullah Mission School",
+        photoUrl: null,
+        gps: tsData.checkOutGps ?? null,
+        auto: false,
+        distanceM: typeof tsData.checkOutGps?.distanceM === "number" ? tsData.checkOutGps.distanceM : undefined,
+        status: "School Punch-Out Completed",
+      });
+    }
 
     return {
       ok: true,
       day,
       workerId,
       absent: checkInMs == null,
-      workerName,
-      workerEmail,
-      status: String(tsData.status ?? "present"),
+      workerName: String(tsData.teacherName ?? workerName ?? "Teacher"),
+      workerEmail: String(tsData.teacherEmail ?? workerEmail ?? ""),
+      status: String(tsData.status ?? (isLate ? "late" : "present")),
       currentSiteId: "mhms_main_campus",
-      currentSiteName: "MHMS Main Campus",
+      currentSiteName: "Munshi Habibullah Mission School",
       onLeave: approvedLeave !== null,
       leave: approvedLeave,
       checkIn: checkInMs
         ? {
             atMs: checkInMs,
             siteId: "mhms_main_campus",
-            siteName: "MHMS Main Campus",
+            siteName: "Munshi Habibullah Mission School",
             photoUrl: null,
             gps: tsData.checkInGps ?? null,
           }
@@ -566,19 +682,19 @@ export async function buildWorkerDayDetail(
         ? {
             atMs: checkOutMs,
             siteId: "mhms_main_campus",
-            siteName: "MHMS Main Campus",
+            siteName: "Munshi Habibullah Mission School",
             photoUrl: null,
             gps: tsData.checkOutGps ?? null,
             auto: false,
           }
         : null,
       siteSwitchLogs: [],
-      timeline: [],
+      timeline,
       analytics: {
         sessionOpen: checkOutMs == null,
         switchCount: 0,
         uniqueSitesCount: 1,
-        sitesVisitedOrdered: [{ id: "mhms_main_campus", name: "MHMS Main Campus" }],
+        sitesVisitedOrdered: [{ id: "mhms_main_campus", name: "Munshi Habibullah Mission School" }],
         firstEventMs: checkInMs,
         lastEventMs: checkOutMs ?? checkInMs,
         totalSessionMs,
@@ -586,9 +702,9 @@ export async function buildWorkerDayDetail(
           ? [
               {
                 siteId: "mhms_main_campus",
-                siteName: "MHMS Main Campus",
+                siteName: "Munshi Habibullah Mission School",
                 startMs: checkInMs,
-                endMs: checkOutMs ?? checkInMs + totalSessionMs,
+                endMs: checkOutMs ?? (checkInMs + totalSessionMs),
                 durationMs: totalSessionMs,
                 workScheduleLabel: "9:00 AM – 3:30 PM",
               },
@@ -604,6 +720,24 @@ export async function buildWorkerDayDetail(
       },
       overtime,
       offsite,
+      teacherSession: {
+        teacherName: String(tsData.teacherName ?? workerName ?? "Teacher"),
+        teacherEmail: String(tsData.teacherEmail ?? workerEmail ?? ""),
+        teacherPhone: tsData.teacherPhone ?? null,
+        designation: String(tsData.designation ?? "Teacher"),
+        position: String(tsData.position ?? "teacher"),
+        wingId: String(tsData.wingId ?? "higher"),
+        isClassTeacher: tsData.isClassTeacher === true,
+        schoolClassId: tsData.schoolClassId ?? null,
+        schoolSectionId: tsData.schoolSectionId ?? null,
+        isLate,
+        lateArrival: isLate,
+        lateMinutes: typeof tsData.lateMinutes === "number" ? tsData.lateMinutes : undefined,
+        cutoffTime: typeof tsData.cutoffTime === "string" ? tsData.cutoffTime : "09:00 AM",
+        checkInGps: tsData.checkInGps ?? null,
+        checkOutGps: tsData.checkOutGps ?? null,
+        emergencyLeave: tsData.emergencyLeave ?? null,
+      },
     };
   }
 

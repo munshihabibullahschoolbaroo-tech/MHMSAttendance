@@ -74,7 +74,7 @@ export async function GET(req: Request) {
       });
 
       const totalMarked = presentDays + absentDays + lateDays;
-      const percent = totalMarked > 0 ? Math.round((presentDays / totalMarked) * 100) : 100;
+      const percent = totalMarked > 0 ? Math.round((presentDays / totalMarked) * 100) : 0;
 
       studentStats = {
         studentId,

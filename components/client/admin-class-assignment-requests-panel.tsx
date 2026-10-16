@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
 
 type AssignmentRequest = {
   id: string;
@@ -30,6 +31,13 @@ export function AdminClassAssignmentRequestsPanel({ embedded = false }: { embedd
   const [loading, setLoading] = React.useState(true);
   const [filter, setFilter] = React.useState<"all" | "pending" | "approved" | "rejected">("pending");
   const [actionBusyId, setActionBusyId] = React.useState<string | null>(null);
+  const [declineTarget, setDeclineTarget] = React.useState<{
+    id: string;
+    teacherName: string;
+    requestedClass: string;
+    requestedSection: string;
+  } | null>(null);
+  const [declineNote, setDeclineNote] = React.useState("");
 
   const fetchRequests = React.useCallback(async () => {
     setLoading(true);
@@ -57,14 +65,7 @@ export function AdminClassAssignmentRequestsPanel({ embedded = false }: { embedd
     void fetchRequests();
   }, [fetchRequests]);
 
-  const handleReview = async (requestId: string, action: "approve" | "reject") => {
-    let note = "";
-    if (action === "reject") {
-      const input = window.prompt("Reason for declining this assignment (optional):");
-      if (input === null) return; // user cancelled prompt
-      note = input;
-    }
-
+  const handleReview = async (requestId: string, action: "approve" | "reject", note = "") => {
     setActionBusyId(requestId);
     try {
       const auth = getFirebaseAuth();
@@ -268,7 +269,15 @@ export function AdminClassAssignmentRequestsPanel({ embedded = false }: { embedd
                           variant="outline"
                           size="sm"
                           disabled={isBusy}
-                          onClick={() => handleReview(r.id, "reject")}
+                          onClick={() => {
+                            setDeclineNote("");
+                            setDeclineTarget({
+                              id: r.id,
+                              teacherName: r.teacherName,
+                              requestedClass: r.requestedClass,
+                              requestedSection: r.requestedSection,
+                            });
+                          }}
                           className="gap-1.5 text-rose-600 border-rose-200 hover:bg-rose-50 dark:border-rose-900/40 dark:text-rose-400 dark:hover:bg-rose-950/20 text-xs font-bold rounded-xl h-8 px-3"
                         >
                           <X className="size-3.5" />
@@ -283,6 +292,43 @@ export function AdminClassAssignmentRequestsPanel({ embedded = false }: { embedd
           })}
         </div>
       )}
+
+      {/* DangerConfirmModal for Declining Assignment Request */}
+      <DangerConfirmModal
+        open={Boolean(declineTarget)}
+        onClose={() => setDeclineTarget(null)}
+        onConfirm={async () => {
+          if (!declineTarget) return;
+          const { id } = declineTarget;
+          const note = declineNote.trim();
+          setDeclineTarget(null);
+          await handleReview(id, "reject", note);
+        }}
+        title="Decline Class Teacher Assignment"
+        subtitle={
+          declineTarget
+            ? `${declineTarget.teacherName} — ${declineTarget.requestedClass} (${declineTarget.requestedSection})`
+            : undefined
+        }
+        description={
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-300">
+              Are you sure you want to decline this class teacher assignment request? You can provide a reason or note below.
+            </p>
+            <textarea
+              value={declineNote}
+              onChange={(e) => setDeclineNote(e.target.value)}
+              placeholder="Reason for declining (optional)..."
+              rows={3}
+              className="w-full rounded-xl border border-red-500/30 bg-zinc-900 p-2.5 text-xs text-zinc-100 placeholder:text-zinc-500 outline-none resize-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+            />
+          </div>
+        }
+        confirmText="Decline Assignment"
+        cancelText="Cancel"
+        loading={Boolean(actionBusyId)}
+        variant="danger"
+      />
     </div>
   );
 }
