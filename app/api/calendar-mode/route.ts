@@ -12,14 +12,7 @@ export async function GET(req: Request) {
   const auth = await requireBearerUser(req);
   if (!auth.ok) return auth.response;
 
-  const cached = getCalendarModeCache();
-  if (cached && cached.expiresAt > Date.now()) {
-    return Response.json({ mode: cached.mode });
-  }
-
-  const snap = await adminDb().doc("system/appSettings").get();
-  const mode = snap.exists && snap.get("calendarMode") === "bs" ? "bs" : "ad";
-  setCalendarModeCache({ mode, expiresAt: Date.now() + CALENDAR_MODE_CACHE_TTL_MS });
-  return Response.json({ mode });
+  // Calendar mode is permanently Gregorian (AD)
+  return Response.json({ mode: "ad" });
 }
 

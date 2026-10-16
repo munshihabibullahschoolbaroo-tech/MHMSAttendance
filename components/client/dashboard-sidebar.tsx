@@ -282,10 +282,10 @@ export function DashboardSidebar({
                   <button
                     type="button"
                     onClick={onToggleCollapse}
-                    className="flex size-8 items-center justify-center rounded-xl border border-zinc-200/80 bg-zinc-100/80 text-zinc-600 transition-colors hover:border-zinc-300 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:border-white/20 dark:hover:bg-white/10 dark:hover:text-zinc-100 shadow-2xs cursor-pointer"
+                    className="flex size-8 items-center justify-center bg-transparent border-0 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 transition-colors cursor-pointer"
                     aria-label="Expand sidebar"
                   >
-                    <PanelLeftOpen className="size-4" />
+                    <PanelLeftOpen className="size-4.5" />
                   </button>
                   <span className="pointer-events-none fixed left-[76px] z-[100050] hidden whitespace-nowrap rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white shadow-2xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900 border border-zinc-700/60 dark:border-zinc-300">
                     Expand sidebar
@@ -301,11 +301,11 @@ export function DashboardSidebar({
                 <button
                   type="button"
                   onClick={onToggleCollapse}
-                  className="size-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200/80 bg-zinc-100/60 text-zinc-500 transition-colors hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100 flex cursor-pointer"
+                  className="flex size-8 shrink-0 items-center justify-center bg-transparent border-0 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 transition-colors cursor-pointer"
                   title="Collapse sidebar"
                   aria-label="Collapse sidebar"
                 >
-                  <PanelLeftClose className="size-4" />
+                  <PanelLeftClose className="size-4.5" />
                 </button>
               )}
             </>

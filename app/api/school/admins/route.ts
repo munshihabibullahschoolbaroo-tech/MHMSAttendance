@@ -6,9 +6,25 @@ import { normalizeSuperAdminEmail } from "@/lib/auth/super-admin";
 
 export const runtime = "nodejs";
 
+let cachedAdmins: Array<{
+  id: string;
+  name: string;
+  email: string;
+  role: "super_admin" | "admin";
+}> | null = null;
+let cachedAdminsExpiresAt = 0;
+
 export async function GET(req: Request) {
   const auth = await requireBearerUser(req);
   if (!auth.ok) return auth.response;
+
+  const now = Date.now();
+  if (cachedAdmins && now < cachedAdminsExpiresAt) {
+    return NextResponse.json(
+      { ok: true, admins: cachedAdmins },
+      { headers: { "Cache-Control": "private, max-age=60" } }
+    );
+  }
 
   try {
     const db = adminDb();
@@ -103,7 +119,13 @@ export async function GET(req: Request) {
       return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
     });
 
-    return NextResponse.json({ ok: true, admins });
+    cachedAdmins = admins;
+    cachedAdminsExpiresAt = Date.now() + 60_000;
+
+    return NextResponse.json(
+      { ok: true, admins },
+      { headers: { "Cache-Control": "private, max-age=60" } }
+    );
   } catch (e: any) {
     console.error("[api/school/admins] Error:", e);
     return jsonError("Failed to fetch school administrators", 500);

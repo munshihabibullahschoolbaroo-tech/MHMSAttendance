@@ -13,6 +13,7 @@ import { useCalendarMode } from "@/components/client/calendar-mode-context";
 import { formatIsoForCalendar, formatTimestampForMode, CalendarMode } from "@/lib/date/bs-calendar";
 import { cn } from "@/lib/utils";
 import { formatWallHm12h } from "@/lib/time/format-wall-time";
+import { Clock, RefreshCw, AlertCircle } from "lucide-react";
 
 type Segment = { siteId: string; inHm: string; outHm: string; };
 
@@ -24,6 +25,8 @@ type Row = {
   date?: string;
   reason?: string;
   status?: string;
+  type?: string;
+  isLateSignOut?: boolean;
   segments?: Segment[];
   createdAt?: { seconds?: number };
   reviewedAt?: { seconds?: number };
@@ -70,8 +73,7 @@ export function AdminManualPunchRequestsPanel({ embedded = false }: { embedded?:
     setLoading(true);
     try {
       const h = await authHeaders();
-      const q = filter === "all" ? "" : `?status=${encodeURIComponent(filter)}`;
-      const res = await fetch(`/api/manual-punch${q}`, { headers: h });
+      const res = await fetch("/api/manual-punch", { headers: h });
       const data = (await res.json()) as { items?: Row[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to load requests");
       setItems(data.items ?? []);
@@ -81,7 +83,14 @@ export function AdminManualPunchRequestsPanel({ embedded = false }: { embedded?:
     } finally {
       setLoading(false);
     }
-  }, [filter, authHeaders]);
+  }, [authHeaders]);
+
+  const filtered = React.useMemo(() => {
+    if (filter === "all") return items;
+    return items.filter((row) => row.status === filter);
+  }, [items, filter]);
+
+  const pendingCount = React.useMemo(() => items.filter((row) => row.status === "pending").length, [items]);
 
   React.useEffect(() => {
     void loadSites();
@@ -156,142 +165,184 @@ export function AdminManualPunchRequestsPanel({ embedded = false }: { embedded?:
   const hasItems = items.length > 0;
 
   return (
-    <div className={cn("space-y-6", !embedded && "mt-4")}>
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        {!embedded && (
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Late Request</h1>
-            <p className="mt-1 text-sm text-zinc-500">Approve missed or late attendance. Timeline overrides will be applied automatically.</p>
-          </div>
-        )}
-      </div>
+    <div className="space-y-6">
+      <Card className="rounded-2xl border border-zinc-200/80 bg-white shadow-xs dark:border-white/10 dark:bg-zinc-950">
+        <CardHeader className="px-4 sm:px-6 pt-5 pb-4 border-b border-zinc-100 dark:border-white/5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div>
+              <CardTitle className="text-lg font-bold flex items-center gap-2">
+                <Clock className="size-5 text-purple-600 dark:text-purple-400" />
+                Missed & Late Sign-Out Requests
+                {pendingCount > 0 && (
+                  <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 text-xs px-2.5 py-0.5 font-bold">
+                    {pendingCount} Pending
+                  </span>
+                )}
+              </CardTitle>
+              <CardDescription className="text-xs mt-1">
+                Approve missed punches or late sign-out attendance requests. Timeline overrides are applied automatically.
+              </CardDescription>
+            </div>
 
-      <div className="mx-auto flex max-w-3xl flex-col gap-4">
-        <div className="flex flex-wrap gap-2">
-          {(["pending", "approved", "rejected", "all"] as const).map((f) => (
-            <Button
-              key={f}
-              type="button"
-              size="sm"
-              variant={filter === f ? "default" : "secondary"}
-              onClick={() => setFilter(f)}
-            >
-              {f === "all" ? "All" : f}
-            </Button>
-          ))}
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Queue</CardTitle>
-            <CardDescription>Newest first. Approve missed or late attendance.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {loading ? (
-              <div className="space-y-3" aria-hidden>
-                <Skeleton className="h-32 rounded-xl" />
-                <Skeleton className="h-32 rounded-xl" />
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Status filter tabs */}
+              <div className="inline-flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900 border border-zinc-200/80 dark:border-white/10 text-xs">
+                {(["pending", "approved", "rejected", "all"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setFilter(f)}
+                    className={cn(
+                      "rounded-lg px-3 py-1 font-bold capitalize transition-all cursor-pointer",
+                      filter === f
+                        ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
+                        : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400"
+                    )}
+                  >
+                    {f}
+                    {f === "pending" && pendingCount > 0 && ` (${pendingCount})`}
+                  </button>
+                ))}
               </div>
-            ) : items.length === 0 ? (
-              <p className="text-sm text-zinc-400">No requests.</p>
-            ) : (
-              <ul className="space-y-4">
-                {items.map((row) => {
-            const isPending = row.status === "pending";
-            const dateStr = typeof row.date === "string" ? formatIsoForCalendar(row.date, mode) : "—";
-            const workerLabel = row.workerName || row.workerEmail || row.workerId || "Unknown";
 
-            return (
-              <li key={row.id} className="relative flex flex-col gap-3 rounded-xl border border-zinc-200 p-4 transition-colors dark:border-white/10 dark:bg-white/[0.01]">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h4 className="font-semibold text-zinc-900 dark:text-white">{workerLabel}</h4>
-                      <p className="text-sm text-zinc-500">
-                        Date: <span className="font-semibold">{dateStr}</span>
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          "rounded-md px-2.5 py-1 text-xs font-semibold capitalize",
-                          isPending && "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-                          row.status === "approved" && "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-                          row.status === "rejected" && "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
-                        )}
-                      >
-                        {row.status}
-                      </span>
-                    </div>
-                  </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void load()}
+                disabled={loading}
+                className="rounded-xl h-8 px-2.5 gap-1.5 text-xs cursor-pointer"
+              >
+                <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+                <span>Refresh</span>
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
 
-                  <div className="space-y-4 text-sm">
-                  <div className="grid gap-y-1 sm:grid-cols-2">
-                    <div><span className="font-medium text-zinc-500">Submitted:</span> {fmt(row.createdAt, mode)}</div>
-                    {row.reviewedAt && (
-                      <div className="sm:col-span-2">
-                        <span className="font-medium text-zinc-500">Reviewed By:</span> {row.reviewedByEmail || "Admin"} on {fmt(row.reviewedAt, mode)}
-                      </div>
-                    )}
-                  </div>
+        <CardContent className="px-4 sm:px-6 py-5">
+          {loading ? (
+            <div className="py-16 text-center text-xs text-zinc-400 animate-pulse">
+              Loading requests...
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-zinc-200 p-12 text-center dark:border-white/10">
+              <AlertCircle className="size-8 text-zinc-400 mx-auto mb-2 opacity-50" />
+              <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                No {filter !== "all" ? filter : ""} requests found
+              </p>
+              <p className="text-xs text-zinc-500 mt-1">
+                {filter === "pending"
+                  ? "All missed punch and late sign-out requests have been reviewed."
+                  : `No requests with status "${filter}".`}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[calc(100vh-340px)] min-h-[280px] overflow-y-auto pr-1 sm:pr-2">
+              <ul className="space-y-3">
+                {filtered.map((row) => {
+                  const isPending = row.status === "pending";
+                  const dateStr = typeof row.date === "string" ? formatIsoForCalendar(row.date, mode) : "—";
+                  const workerLabel = row.workerName || row.workerEmail || row.workerId || "Unknown";
 
-                  <div className="rounded border bg-zinc-50 p-3 dark:border-white/10 dark:bg-white/[0.02]">
-                    <span className="font-medium text-zinc-500">Reason</span>
-                    <p className="mt-1 text-zinc-800 dark:text-zinc-200">{row.reason}</p>
-                  </div>
-
-                  <div className="rounded border bg-indigo-50/50 p-3 dark:border-indigo-500/10 dark:bg-indigo-950/20">
-                    <span className="font-medium text-indigo-700 dark:text-indigo-400">Timeline Requested</span>
-                    <ul className="mt-2 space-y-2">
-                      {row.segments?.map((seg, idx) => (
-                        <li key={idx} className="flex gap-2 text-zinc-800 dark:text-zinc-300">
-                          <span className="bg-indigo-100 dark:bg-indigo-900/50 px-1.5 py-0.5 rounded text-xs font-mono">
-                            Block {idx + 1} ({siteName(seg.siteId)})
+                  return (
+                    <li key={row.id} className="relative flex flex-col gap-3 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-xs transition-colors dark:border-white/10 dark:bg-zinc-900/60">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="font-semibold text-zinc-900 dark:text-white text-sm">{workerLabel}</h4>
+                            {(row.type === "late_sign_out" || row.isLateSignOut) && (
+                              <span className="rounded-md bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300 px-2 py-0.5 text-xs font-semibold">
+                                🌙 Late Sign-Out
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-zinc-500 mt-0.5">
+                            Date: <span className="font-semibold text-zinc-700 dark:text-zinc-300">{dateStr}</span>
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              "rounded-full px-2.5 py-0.5 text-[10px] font-bold capitalize border",
+                              isPending && "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30",
+                              row.status === "approved" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
+                              row.status === "rejected" && "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30"
+                            )}
+                          >
+                            {row.status}
                           </span>
-                          <span>In: {formatWallHm12h(seg.inHm)}</span>
-                          <span className="text-zinc-400">→</span>
-                          <span>Out: {formatWallHm12h(seg.outHm)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                        </div>
+                      </div>
 
-                  {row.reviewNote && (
-                    <div className="rounded-md border border-red-200 bg-red-50 p-3 text-red-800 dark:border-red-900/30 dark:bg-red-950/30 dark:text-red-300">
-                      <strong>Rejection Note:</strong> {row.reviewNote}
-                    </div>
-                  )}
+                      <div className="space-y-3 text-xs">
+                        <div className="grid gap-y-1 sm:grid-cols-2 text-zinc-500">
+                          <div><span className="font-medium">Submitted:</span> {fmt(row.createdAt, mode)}</div>
+                          {row.reviewedAt && (
+                            <div>
+                              <span className="font-medium">Reviewed By:</span> {row.reviewedByEmail || "Admin"} on {fmt(row.reviewedAt, mode)}
+                            </div>
+                          )}
+                        </div>
 
-                  {/* Actions */}
-                  <div className="flex flex-wrap items-center gap-2 pt-2">
-                    {isPending ? (
-                      <>
-                        <Button size="sm" onClick={() => doAction(row.id, "approved")} disabled={actionBusy} className="bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500 text-white dark:bg-emerald-700 dark:hover:bg-emerald-600">
-                          Approve
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => setConfirm({ kind: "reject", row })} disabled={actionBusy} className="text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/50">
-                          Reject
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button size="sm" variant="outline" onClick={() => setConfirm({ kind: "unapprove", row })} disabled={actionBusy}>
-                          {row.status === "approved" ? "Un-Approve (Undo)" : "Reset to Pending"}
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => setConfirm({ kind: "delete", id: row.id })} disabled={actionBusy} className="text-red-500 hover:bg-red-50 hover:text-red-600 dark:text-red-400 dark:hover:bg-red-950/50">
-                          Delete Request
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                  </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </CardContent>
-  </Card>
-</div>
+                        <div className="rounded-xl border border-zinc-100 bg-zinc-50/70 p-3 dark:border-white/5 dark:bg-white/[0.02]">
+                          <span className="font-bold text-zinc-600 dark:text-zinc-300">Reason</span>
+                          <p className="mt-1 text-zinc-800 dark:text-zinc-200">{row.reason}</p>
+                        </div>
+
+                        <div className="rounded-xl border border-purple-500/20 bg-purple-50/50 p-3 dark:border-purple-500/10 dark:bg-purple-950/20">
+                          <span className="font-bold text-purple-700 dark:text-purple-300">Timeline Requested</span>
+                          <ul className="mt-2 space-y-1.5">
+                            {row.segments?.map((seg, idx) => (
+                              <li key={idx} className="flex flex-wrap items-center gap-2 text-zinc-800 dark:text-zinc-300 font-mono text-[11px]">
+                                <span className="bg-purple-100 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200 px-1.5 py-0.5 rounded font-sans font-bold text-[10px]">
+                                  Block {idx + 1} ({siteName(seg.siteId)})
+                                </span>
+                                <span>In: {formatWallHm12h(seg.inHm)}</span>
+                                <span className="text-zinc-400">→</span>
+                                <span>Out: {formatWallHm12h(seg.outHm)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        {row.reviewNote && (
+                          <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 text-rose-800 dark:border-rose-900/30 dark:bg-rose-950/30 dark:text-rose-300">
+                            <strong>Rejection Note:</strong> {row.reviewNote}
+                          </div>
+                        )}
+
+                        {/* Actions */}
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          {isPending ? (
+                            <>
+                              <Button size="sm" onClick={() => doAction(row.id, "approved")} disabled={actionBusy} className="h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-xs">
+                                Approve
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => setConfirm({ kind: "reject", row })} disabled={actionBusy} className="h-8 text-xs font-bold gap-1.5 text-rose-600 border-rose-200 hover:bg-rose-50 dark:border-rose-900/40 dark:hover:bg-rose-950/20 cursor-pointer">
+                                Reject
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button size="sm" variant="outline" onClick={() => setConfirm({ kind: "unapprove", row })} disabled={actionBusy} className="h-8 text-xs font-semibold cursor-pointer">
+                                {row.status === "approved" ? "Un-Approve (Undo)" : "Reset to Pending"}
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setConfirm({ kind: "delete", id: row.id })} disabled={actionBusy} className="h-8 text-xs font-semibold text-rose-500 hover:bg-rose-50 hover:text-rose-600 dark:text-rose-400 dark:hover:bg-rose-950/50 cursor-pointer">
+                                Delete Request
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Confirmation Modal */}
       {confirm?.kind === "delete" && (

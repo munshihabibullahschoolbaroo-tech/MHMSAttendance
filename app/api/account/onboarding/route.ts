@@ -89,6 +89,23 @@ export async function POST(req: Request) {
           400
         );
       }
+
+      const existingPending = allUsersSnap.docs.find((doc) => {
+        if (doc.id === auth.decoded.uid) return false;
+        const pending = doc.get("pendingClassAssignment");
+        return (
+          pending &&
+          pending.status === "pending" &&
+          pending.classId === schoolClassId &&
+          pending.sectionId === schoolSectionId
+        );
+      });
+      if (existingPending) {
+        return jsonError(
+          `${schoolClassId} (${schoolSectionId}) has already been requested by another staff member (${existingPending.get("name") || "Teacher"}) and is pending admin approval. Please choose an available class.`,
+          400
+        );
+      }
     }
 
     let employeeId = userSnap.get("employeeId");

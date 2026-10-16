@@ -112,70 +112,80 @@ export function AdminClassAssignmentRequestsPanel({ embedded = false }: { embedd
   const pendingCount = items.filter((i) => i.status === "pending").length;
 
   return (
-    <div className="space-y-4">
-      {/* Header bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-            <UserCheck className="size-5 text-blue-600 dark:text-blue-400" />
-            Class Teacher Appointment Requests
-            {pendingCount > 0 && (
-              <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-bold text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                {pendingCount} Pending
-              </span>
-            )}
-          </h2>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Review teacher applications to be assigned as official Class Teachers for specific classes.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Status filter tabs */}
-          <div className="inline-flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900 border border-zinc-200/80 dark:border-white/10 text-xs">
-            {(["pending", "approved", "rejected", "all"] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setFilter(f)}
-                className={cn(
-                  "rounded-lg px-3 py-1 font-bold capitalize transition-all cursor-pointer",
-                  filter === f
-                    ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
-                    : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400"
+    <div className="space-y-6">
+      <Card className="rounded-2xl border border-zinc-200/80 bg-white shadow-xs dark:border-white/10 dark:bg-zinc-950">
+        <CardHeader className="px-4 sm:px-6 pt-5 pb-4 border-b border-zinc-100 dark:border-white/5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div>
+              <CardTitle className="text-lg font-bold flex items-center gap-2">
+                <UserCheck className="size-5 text-blue-600 dark:text-blue-400" />
+                Class Teacher Appointment Requests
+                {pendingCount > 0 && (
+                  <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 text-xs px-2.5 py-0.5 font-bold">
+                    {pendingCount} Pending
+                  </span>
                 )}
+              </CardTitle>
+              <CardDescription className="text-xs mt-1">
+                Review teacher applications to be assigned as official Class Teachers for specific classes.
+              </CardDescription>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Status filter tabs */}
+              <div className="inline-flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900 border border-zinc-200/80 dark:border-white/10 text-xs">
+                {(["pending", "approved", "rejected", "all"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setFilter(f)}
+                    className={cn(
+                      "rounded-lg px-3 py-1 font-bold capitalize transition-all cursor-pointer",
+                      filter === f
+                        ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
+                        : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400"
+                    )}
+                  >
+                    {f}
+                    {f === "pending" && pendingCount > 0 && ` (${pendingCount})`}
+                  </button>
+                ))}
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={fetchRequests}
+                disabled={loading}
+                className="rounded-xl h-8 px-2.5 gap-1.5 text-xs cursor-pointer"
               >
-                {f}
-              </button>
-            ))}
+                <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+                <span>Refresh</span>
+              </Button>
+            </div>
           </div>
+        </CardHeader>
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={fetchRequests}
-            disabled={loading}
-            className="rounded-xl h-8 px-2.5 gap-1.5 text-xs"
-          >
-            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-          </Button>
-        </div>
-      </div>
-
-      {/* Requests list */}
-      {loading ? (
-        <div className="p-12 text-center text-xs text-zinc-500">
-          Loading teacher assignment requests...
-        </div>
-      ) : filtered.length === 0 ? (
-        <Card className="border-dashed border-zinc-200 dark:border-white/10">
-          <CardContent className="p-8 text-center text-xs text-zinc-500 dark:text-zinc-400">
-            No {filter !== "all" ? filter : ""} class teacher assignment requests found.
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-3">
+        <CardContent className="px-4 sm:px-6 py-5">
+          {loading ? (
+            <div className="py-16 text-center text-xs text-zinc-400 animate-pulse">
+              Loading teacher assignment requests...
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-zinc-200 p-12 text-center dark:border-white/10">
+              <AlertCircle className="size-8 text-zinc-400 mx-auto mb-2 opacity-50" />
+              <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                No {filter !== "all" ? filter : ""} class teacher assignment requests found
+              </p>
+              <p className="text-xs text-zinc-500 mt-1">
+                {filter === "pending"
+                  ? "All class teacher assignment applications have been reviewed."
+                  : `No requests with status "${filter}".`}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[calc(100vh-340px)] min-h-[280px] overflow-y-auto pr-1 sm:pr-2">
           {filtered.map((r) => {
             const isBusy = actionBusyId === r.id;
             const dateStr = r.createdAt?._seconds
@@ -290,8 +300,10 @@ export function AdminClassAssignmentRequestsPanel({ embedded = false }: { embedd
               </Card>
             );
           })}
-        </div>
-      )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* DangerConfirmModal for Declining Assignment Request */}
       <DangerConfirmModal

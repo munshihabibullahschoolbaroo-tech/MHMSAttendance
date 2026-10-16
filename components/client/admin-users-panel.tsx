@@ -127,6 +127,36 @@ export function getUserWing(u: {
   return null;
 }
 
+export function formatUserPosition(u: {
+  position?: string | null;
+  designation?: string | null;
+  role?: string | null;
+}): string {
+  const pos = (u.position || "").trim().toLowerCase();
+  if (pos === "principal") return "Principal";
+  if (pos === "vice_principal" || pos === "vice principal") return "Vice Principal";
+  if (pos === "lecturer") return "Lecturer";
+  if (pos === "teacher") return "Teacher";
+  if (pos === "helper") return "Helper";
+  if (pos === "incharge" || pos === "in_charge") return "Incharge";
+
+  if (pos) {
+    return pos.charAt(0).toUpperCase() + pos.slice(1).replace(/_/g, " ");
+  }
+
+  // Fallback to checking designation if position was unset
+  const desig = (u.designation || "").trim().toLowerCase();
+  if (desig.includes("vice principal")) return "Vice Principal";
+  if (desig.includes("principal")) return "Principal";
+  if (desig.includes("lecturer") || desig.includes("lect.")) return "Lecturer";
+  if (desig.includes("incharge") || desig.includes("in-charge")) return "Incharge";
+  if (desig.includes("helper") || desig.includes("peon") || desig.includes("ayah")) return "Helper";
+  if (desig.includes("teacher")) return "Teacher";
+
+  if (u.role === "admin") return "Admin";
+  return "Teacher";
+}
+
 type Row = {
   id: string;
   employeeId?: string;
@@ -576,30 +606,30 @@ export function AdminUsersPanel() {
             />
             <div
               className={cn(
-                "relative z-[1] flex max-h-[min(92dvh,880px)] flex-col rounded-t-2xl border border-white/15 bg-zinc-950 shadow-2xl sm:mx-auto sm:max-w-lg sm:rounded-2xl md:max-w-xl lg:max-w-3xl"
+                "relative z-[1] flex max-h-[min(92dvh,880px)] flex-col rounded-t-2xl border border-zinc-200 bg-white shadow-2xl dark:border-white/10 dark:bg-zinc-950 sm:mx-auto sm:max-w-lg sm:rounded-2xl md:max-w-xl lg:max-w-3xl"
               )}
             >
-              <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
+              <div className="flex items-start justify-between gap-3 border-b border-zinc-200/80 dark:border-white/10 px-4 py-3.5">
                 <div className="min-w-0">
-                  <h2 id="workers-calendar-title" className="text-lg font-semibold text-zinc-100">
+                  <h2 id="workers-calendar-title" className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
                     Worker attendance calendar
                   </h2>
-                  <p className="mt-0.5 text-xs text-zinc-500">
+                  <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
                     Search a user, then tap a day to open their timeline.
                   </p>
                 </div>
                 <button
                   type="button"
-                  className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100 transition-colors"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
                   aria-label="Close"
                   onClick={() => setCalendarOpen(false)}
                 >
-                  <X className="size-5" />
+                  <X className="size-4" />
                 </button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-3">
                 <label className="mb-3 block text-sm">
-                  <span className="text-zinc-400">Worker</span>
+                  <span className="text-zinc-700 dark:text-zinc-300 font-medium text-xs">Worker</span>
                   <SearchableSelect
                     value={calendarWorkerId}
                     onValueChange={setCalendarWorkerId}
@@ -612,7 +642,7 @@ export function AdminUsersPanel() {
                     }))}
                     emptyLabel="Select worker…"
                     searchPlaceholder="Search workers…"
-                    triggerClassName="mt-1 h-10 w-full rounded-xl border border-white/10 bg-black/40 px-3 text-sm"
+                    triggerClassName="mt-1.5 h-10 w-full rounded-xl border border-zinc-200 bg-zinc-50 text-zinc-900 dark:border-white/10 dark:bg-black/40 dark:text-zinc-100 px-3 text-sm"
                     popoverContentClassName="z-[1400]"
                     listClassName="max-h-[min(240px,40vh)]"
                   />
@@ -685,7 +715,8 @@ export function AdminUsersPanel() {
                     setLeaveReviewTarget(null);
                     setShowRejectBox(false);
                   }}
-                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-black/10 hover:text-zinc-100 transition-colors"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
+                  aria-label="Close"
                 >
                   <X className="size-4" />
                 </button>
@@ -901,9 +932,10 @@ export function AdminUsersPanel() {
                   <button
                     type="button"
                     onClick={() => setSelectedTeacher(null)}
-                    className="text-zinc-400 hover:text-zinc-100 p-1"
+                    className="flex size-8 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
+                    aria-label="Close"
                   >
-                    <X className="h-5 w-5" />
+                    <X className="size-4" />
                   </button>
                 </CardHeader>
                 <CardContent className="space-y-4 text-xs">
@@ -936,9 +968,14 @@ export function AdminUsersPanel() {
                     <div className="p-3 rounded-xl border border-zinc-200 dark:border-white/5 bg-zinc-50 dark:bg-white/[0.02]">
                       <span className="text-zinc-400 font-medium">Role & Position</span>
                       <p className="font-semibold text-zinc-800 dark:text-zinc-200 text-xs mt-0.5">
-                        {selectedTeacher.designation ||
-                          selectedTeacher.position ||
-                          selectedTeacher.role}
+                        {formatUserPosition(selectedTeacher)}
+                        {selectedTeacher.designation &&
+                          selectedTeacher.designation.trim().toLowerCase() !==
+                            formatUserPosition(selectedTeacher).toLowerCase() && (
+                            <span className="block text-[11px] text-zinc-600 dark:text-zinc-400 font-normal mt-0.5">
+                              {selectedTeacher.designation}
+                            </span>
+                          )}
                       </p>
                     </div>
                   </div>
@@ -1445,7 +1482,7 @@ export function AdminUsersPanel() {
                     ) : null}
                     <th className="px-3 py-2">Name</th>
                     <th className="px-3 py-2">Contact</th>
-                    <th className="px-3 py-2">Branch & Role</th>
+                    <th className="px-3 py-2">Role & Position</th>
                     {canManageAdmins ? <th className="px-3 py-2">Admin</th> : null}
                     <th className="px-3 py-2">Status & Leave</th>
                     <th className="px-3 py-2 text-right">Details</th>
@@ -1478,31 +1515,45 @@ export function AdminUsersPanel() {
                           )}
                         </td>
                       ) : null}
-                      <td className="px-3 py-2 font-medium">
+                      <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                         <div>{r.name}</div>
                         {r.isClassTeacher && r.schoolClassId && (
-                          <div className="text-[11px] text-blue-500 font-normal">
+                          <div className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">
                             Class Incharge: {r.schoolClassId}
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-xs text-zinc-400">
+                      <td className="px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400">
                         <div>{r.email}</div>
-                        {r.phone && <div className="text-[11px] text-zinc-500 font-mono">{r.phone}</div>}
+                        {r.phone && <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">{r.phone}</div>}
                       </td>
                       <td className="px-3 py-2 text-xs">
-                        <div className="font-semibold text-zinc-200">
-                          {r.designation || r.position || r.role}
-                        </div>
-                        {r.schoolWingId ? (
-                          <div className="text-[10px] text-zinc-500 uppercase tracking-wider">
-                            {r.schoolWingId.replace(/_/g, " ")}
-                          </div>
-                        ) : getUserWing(r) ? (
-                          <div className="text-[10px] text-zinc-500/80 uppercase tracking-wider">
-                            {getUserWing(r)?.replace(/_/g, " ")}
-                          </div>
-                        ) : null}
+                        {(() => {
+                          const positionLabel = formatUserPosition(r);
+                          const desig = r.designation?.trim();
+                          const isDistinct =
+                            Boolean(desig) &&
+                            desig!.toLowerCase() !== positionLabel.toLowerCase();
+
+                          if (isDistinct) {
+                            return (
+                              <div>
+                                <div className="font-semibold text-zinc-900 dark:text-zinc-100">
+                                  {desig}
+                                </div>
+                                <div className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase tracking-wider mt-0.5">
+                                  {positionLabel}
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div className="font-semibold text-zinc-900 dark:text-zinc-100">
+                              {positionLabel}
+                            </div>
+                          );
+                        })()}
                       </td>
                       {canManageAdmins ? (
                         <td className="px-3 py-2">

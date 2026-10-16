@@ -1,7 +1,5 @@
 import Link from "next/link";
-import { AuthHeaderProfile } from "@/components/client/auth-header-profile";
-import { ThemeToggle } from "@/components/client/theme-toggle";
-import { MtesBrandLockup } from "@/components/client/mtes-brand-lockup";
+import { ChevronLeft } from "lucide-react";
 
 export default function AuthLayout({
   children,
@@ -11,18 +9,14 @@ export default function AuthLayout({
   return (
     <div className="relative flex min-h-screen flex-col bg-zinc-50 dark:bg-[#050505]">
       <div className="pointer-events-none absolute inset-0 hero-mesh opacity-60" />
-      <header className="relative z-10 flex items-center justify-between px-3 py-4 md:px-6 md:py-5">
+      <header className="relative z-10 flex items-center px-4 py-4 md:px-8 md:py-6">
         <Link
           href="/"
-          className="flex items-center gap-2 text-sm text-foreground hover:text-cyan-600 dark:hover:text-cyan-400"
+          aria-label="Go back"
+          className="group relative flex size-10 md:size-11 items-center justify-center rounded-full bg-white/10 dark:bg-white/[0.08] backdrop-blur-xl border border-white/20 dark:border-white/15 text-zinc-800 dark:text-zinc-100 shadow-[0_8px_32px_0_rgba(0,0,0,0.25)] transition-all duration-300 hover:bg-white/20 dark:hover:bg-white/15 hover:scale-105 active:scale-95"
         >
-          <span aria-hidden>←</span>
-          <MtesBrandLockup variant="inline" showLogo={false} showVendor={false} />
+          <ChevronLeft className="size-5 md:size-5.5 stroke-[2.5] transition-transform group-hover:-translate-x-0.5" />
         </Link>
-        <div className="flex items-center gap-2">
-          <AuthHeaderProfile />
-          <ThemeToggle />
-        </div>
       </header>
       <div className="relative z-10 flex flex-1 items-center justify-center p-3 md:p-6">
         {children}

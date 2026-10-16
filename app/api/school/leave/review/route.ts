@@ -26,7 +26,9 @@ export async function GET(req: Request) {
 
   const db = adminDb();
   const snap = await db.collection("leaveRequests").get();
-  const leaves = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const leaves = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((l: any) => l.type !== "late_sign_out" && !l.isLateSignOut);
   leaves.sort((a: any, b: any) => {
     const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
     const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
@@ -103,6 +105,61 @@ export async function POST(req: Request) {
             },
             { merge: true }
           );
+        }
+      }
+
+      if (data.teacherId && (data.isLateSignOut || data.type === "late_sign_out")) {
+        const dateKey = data.startDate ? String(data.startDate) : "";
+        if (dateKey) {
+          const sessRef = db.collection("teacherSessions").doc(`${data.teacherId}_${dateKey}`);
+          if (status === "approved") {
+            batch.set(
+              sessRef,
+              {
+                checkOutTime: FieldValue.serverTimestamp(),
+                status: "checked_out",
+                "lateSignOutRequest.status": "approved",
+                updatedAt: FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+            // Also mirror to legacy attendance collection
+            const attRef = db.collection("attendance").doc(`${data.teacherId}_${dateKey}`);
+            batch.set(
+              attRef,
+              {
+                checkOut: {
+                  time: FieldValue.serverTimestamp(),
+                  gps: data.gps ?? null,
+                  photoUrl: "",
+                },
+                updatedAt: FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+          } else {
+            batch.set(
+              sessRef,
+              {
+                status: "absent",
+                missedSignOut: true,
+                "lateSignOutRequest.status": "rejected",
+                updatedAt: FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+            // Also mirror to legacy attendance collection
+            const attRef = db.collection("attendance").doc(`${data.teacherId}_${dateKey}`);
+            batch.set(
+              attRef,
+              {
+                status: "absent",
+                missedSignOut: true,
+                updatedAt: FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+          }
         }
       }
 

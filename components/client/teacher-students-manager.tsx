@@ -22,7 +22,6 @@ import {
   Shuffle,
   Send,
   Loader2,
-  Sparkles,
   AlertTriangle,
   UserCheck,
   UserX,
@@ -178,6 +177,61 @@ export function TeacherStudentsManager() {
     [assignedClassesList]
   );
 
+  // Active substitute delegations where this teacher is assigned to cover
+  const [myCoverages, setMyCoverages] = React.useState<
+    Array<{
+      classId: string;
+      sectionId: string;
+      permanentTeacherName: string;
+      reason: string;
+      startDate: string;
+      endDate?: string | null;
+    }>
+  >([]);
+
+  const fetchCoverages = React.useCallback(async () => {
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) return;
+      const token = await u.getIdToken();
+      const res = await fetch("/api/school/students/substitute?mine=true", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.delegations)) {
+        setMyCoverages(data.delegations);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void fetchCoverages();
+    const handleSubChange = () => {
+      void fetchCoverages();
+    };
+    window.addEventListener("substitute-delegation-changed", handleSubChange);
+    return () => window.removeEventListener("substitute-delegation-changed", handleSubChange);
+  }, [fetchCoverages]);
+
+  const approvedSwitch = React.useMemo(() => {
+    return switchRequests.find((r) => r.status === "approved");
+  }, [switchRequests]);
+
+  const pendingSwitch = React.useMemo(() => {
+    return switchRequests.find((r) => r.status === "pending");
+  }, [switchRequests]);
+
+  // Overall class teacher or authorized access check
+  const hasAssignedClass =
+    isAdmin ||
+    Boolean(user?.isClassTeacher && user?.schoolClassId) ||
+    Boolean(myCoverages.length > 0) ||
+    Boolean(approvedSwitch);
+
   // Switch request modal state
   const [isSwitchModalOpen, setIsSwitchModalOpen] = React.useState(false);
   const [targetClass, setTargetClass] = React.useState("");
@@ -185,7 +239,16 @@ export function TeacherStudentsManager() {
   const [switchReason, setSwitchReason] = React.useState("");
   const [submittingSwitch, setSubmittingSwitch] = React.useState(false);
 
+  // Refetch live assigned and requested classes whenever appointment or switch modal opens
+  React.useEffect(() => {
+    if (isAssignModalOpen || isSwitchModalOpen) {
+      void fetchAssignedClasses();
+    }
+  }, [isAssignModalOpen, isSwitchModalOpen, fetchAssignedClasses]);
+
   const fetchSwitchRequests = React.useCallback(async () => {
+    // If user has no class assigned, they cannot switch classes
+    if (!isAdmin && !user?.isClassTeacher) return;
     try {
       const auth = getFirebaseAuth();
       const u = auth.currentUser;
@@ -202,19 +265,11 @@ export function TeacherStudentsManager() {
     } catch {
       /* ignore */
     }
-  }, [selectedDate]);
+  }, [isAdmin, user?.isClassTeacher, selectedDate]);
 
   React.useEffect(() => {
     void fetchSwitchRequests();
   }, [fetchSwitchRequests]);
-
-  const approvedSwitch = React.useMemo(() => {
-    return switchRequests.find((r) => r.status === "approved");
-  }, [switchRequests]);
-
-  const pendingSwitch = React.useMemo(() => {
-    return switchRequests.find((r) => r.status === "pending");
-  }, [switchRequests]);
 
   const handleSendSwitchRequest = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,7 +278,7 @@ export function TeacherStudentsManager() {
       return;
     }
     if (isSectionAssigned(targetClass, targetSection)) {
-      toast.error(`${targetClass} ${targetSection} is already assigned to another teacher.`);
+      toast.error(`${targetClass} ${targetSection} is already assigned or requested by another teacher.`);
       return;
     }
     setSubmittingSwitch(true);
@@ -261,14 +316,57 @@ export function TeacherStudentsManager() {
     }
   };
 
-  const handleSwitchConsumed = (assignedClass?: string | null, assignedSection?: string | null) => {
-    // Revert back to teacher's permanent assigned class
-    const permClass = assignedClass || user?.schoolClassId || defaultClass;
-    const permSection = assignedSection || user?.schoolSectionId || defaultSection;
-    setSelectedClass(permClass);
-    setSelectedSection(permSection);
+  const [applyingSwitch, setApplyingSwitch] = React.useState(false);
+
+  const handleApplySwitch = async (reqId: string, targetCls: string, targetSec: string) => {
+    setApplyingSwitch(true);
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) throw new Error("Not signed in");
+      const token = await u.getIdToken();
+      const res = await fetch("/api/school/students/switch-request", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "apply_approved_switch",
+          requestId: reqId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to switch class");
+      toast.success(data.message || `Switched to ${targetCls} (${targetSec})! Previous class has been unassigned.`);
+      setSelectedClass(targetCls);
+      setSelectedSection(targetSec);
+      void fetchSwitchRequests();
+      void fetchAssignedClasses();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error switching class");
+    } finally {
+      setApplyingSwitch(false);
+    }
+  };
+
+  const handleSwitchConsumed = () => {
     void fetchSwitchRequests();
   };
+
+  // Auto-apply approved switch and set new class active so it acts identically to direct assign
+  React.useEffect(() => {
+    if (!approvedSwitch || approvedSwitch.status !== "approved") return;
+    if (approvedSwitch.requestedClass && selectedClass !== approvedSwitch.requestedClass) {
+      setSelectedClass(approvedSwitch.requestedClass);
+    }
+    if (approvedSwitch.requestedSection && selectedSection !== approvedSwitch.requestedSection) {
+      setSelectedSection(approvedSwitch.requestedSection);
+    }
+    if (user?.schoolClassId !== approvedSwitch.requestedClass || user?.schoolSectionId !== approvedSwitch.requestedSection) {
+      void handleApplySwitch(approvedSwitch.id, approvedSwitch.requestedClass, approvedSwitch.requestedSection);
+    }
+  }, [approvedSwitch, user?.schoolClassId, user?.schoolSectionId]);
 
   const handleUnassignSelf = async () => {
     setUnassigning(true);
@@ -296,8 +394,9 @@ export function TeacherStudentsManager() {
     }
   };
 
-  // Proactively prefetch roster and attendance in background for instant open
+  // Proactively prefetch roster and attendance in background for instant open (only if class is assigned)
   React.useEffect(() => {
+    if (!hasAssignedClass) return;
     if (!selectedClass || !selectedSection) return;
     const auth = getFirebaseAuth();
     const u = auth.currentUser;
@@ -312,7 +411,7 @@ export function TeacherStudentsManager() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
     });
-  }, [selectedClass, selectedSection, selectedWing, selectedDate]);
+  }, [hasAssignedClass, selectedClass, selectedSection, selectedWing, selectedDate]);
 
   const [cancellingRequest, setCancellingRequest] = React.useState(false);
 
@@ -350,7 +449,7 @@ export function TeacherStudentsManager() {
       return;
     }
     if (isSectionAssigned(assignClass, assignSection)) {
-      toast.error(`${assignClass} ${assignSection} is already assigned to another teacher.`);
+      toast.error(`${assignClass} ${assignSection} is already assigned or requested by another teacher.`);
       return;
     }
     setSubmittingAssign(true);
@@ -398,8 +497,6 @@ export function TeacherStudentsManager() {
     }
   };
 
-  const hasAssignedClass = isAdmin || Boolean(user?.isClassTeacher && user?.schoolClassId);
-
   React.useEffect(() => {
     setMounted(true);
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -430,46 +527,6 @@ export function TeacherStudentsManager() {
     return currentMonth.toLocaleString("default", { month: "long", year: "numeric" });
   }, [currentMonth]);
 
-  // Active substitute delegations where this teacher is assigned to cover
-  const [myCoverages, setMyCoverages] = React.useState<
-    Array<{
-      classId: string;
-      sectionId: string;
-      permanentTeacherName: string;
-      reason: string;
-      startDate: string;
-      endDate?: string | null;
-    }>
-  >([]);
-
-  const fetchCoverages = React.useCallback(async () => {
-    try {
-      const auth = getFirebaseAuth();
-      const u = auth.currentUser;
-      if (!u) return;
-      const token = await u.getIdToken();
-      const res = await fetch("/api/school/students/substitute?mine=true", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (Array.isArray(data.delegations)) {
-        setMyCoverages(data.delegations);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void fetchCoverages();
-    const handleSubChange = () => {
-      void fetchCoverages();
-    };
-    window.addEventListener("substitute-delegation-changed", handleSubChange);
-    return () => window.removeEventListener("substitute-delegation-changed", handleSubChange);
-  }, [fetchCoverages]);
-
   // Load school config
   React.useEffect(() => {
     fetch("/api/school/config")
@@ -482,8 +539,9 @@ export function TeacherStudentsManager() {
       .catch(() => {});
   }, []);
 
-  // Fetch monthly class summaries
+  // Fetch monthly class summaries (only if class is assigned)
   React.useEffect(() => {
+    if (!hasAssignedClass) return;
     let cancelled = false;
     const fetchMonth = async () => {
       setLoadingMonth(true);
@@ -522,7 +580,7 @@ export function TeacherStudentsManager() {
     return () => {
       cancelled = true;
     };
-  }, [selectedClass, selectedSection, monthStr]);
+  }, [hasAssignedClass, selectedClass, selectedSection, monthStr]);
 
   // Available classes & sections
   const availableClasses = React.useMemo(() => {
@@ -758,23 +816,8 @@ export function TeacherStudentsManager() {
                     </button>
                   )}
                 </div>
-              ) : approvedSwitch && selectedClass === approvedSwitch.requestedClass ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="rounded-full bg-purple-500/10 px-2.5 py-0.5 text-[10px] font-bold text-purple-600 dark:text-purple-400 border border-purple-500/20">
-                    Temporary Switch
-                  </span>
-                  {user?.schoolClassId && (
-                    <button
-                      type="button"
-                      onClick={handleBackToMyClass}
-                      className="inline-flex items-center gap-1 rounded-full bg-zinc-200/60 dark:bg-zinc-800 px-2 py-0.5 text-[10px] font-bold text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors cursor-pointer"
-                    >
-                      <RotateCcw className="size-2.5" />
-                      <span>My Class</span>
-                    </button>
-                  )}
-                </div>
-              ) : user?.isClassTeacher && selectedClass === user?.schoolClassId ? (
+              ) : (user?.isClassTeacher && (selectedClass === user?.schoolClassId || (approvedSwitch && selectedClass === approvedSwitch.requestedClass))) ||
+                  (approvedSwitch && selectedClass === approvedSwitch.requestedClass) ? (
                 <div className="flex items-center gap-1.5">
                   <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                     Class Incharge
@@ -811,9 +854,13 @@ export function TeacherStudentsManager() {
             </div>
 
             <h1 className="mt-1 text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-white flex items-center gap-2">
-              {!hasAssignedClass && user?.pendingClassAssignment?.status === "pending"
-                ? `${user.pendingClassAssignment.classId} — ${user.pendingClassAssignment.sectionId}`
-                : `${selectedClass} — ${selectedSection}`}
+              {!hasAssignedClass ? (
+                user?.pendingClassAssignment?.status === "pending"
+                  ? `${user.pendingClassAssignment.classId} — ${user.pendingClassAssignment.sectionId} (Pending Approval)`
+                  : "Student Attendance"
+              ) : (
+                `${selectedClass} — ${selectedSection}`
+              )}
             </h1>
           </div>
 
@@ -870,45 +917,8 @@ export function TeacherStudentsManager() {
         </div>
 
 
-        {/* Approved Temporary Class Switch Banner */}
-        {approvedSwitch && (
-          <div className="mt-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-            <div className="flex items-center gap-2.5">
-              <span className="p-1.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0">
-                <Sparkles className="size-4" />
-              </span>
-              <div>
-                <p className="font-bold text-emerald-950 dark:text-emerald-200">
-                  Temporary Class Switch Approved by Administration!
-                </p>
-                <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
-                  You have 1-time authorization to mark attendance for <strong>{approvedSwitch.requestedClass} ({approvedSwitch.requestedSection})</strong> today.
-                </p>
-              </div>
-            </div>
-            {selectedClass !== approvedSwitch.requestedClass || selectedSection !== approvedSwitch.requestedSection ? (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  setSelectedClass(approvedSwitch.requestedClass);
-                  setSelectedSection(approvedSwitch.requestedSection);
-                  setActiveView("rollcall");
-                }}
-                className="bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold h-8 shrink-0 cursor-pointer shadow-xs"
-              >
-                Switch to {approvedSwitch.requestedClass} Now →
-              </Button>
-            ) : (
-              <span className="rounded-lg bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 font-bold px-2.5 py-1 text-xs shrink-0">
-                ✓ Currently Selected (Single Edit)
-              </span>
-            )}
-          </div>
-        )}
-
         {/* Pending Switch Request Banner */}
-        {pendingSwitch && !approvedSwitch && (
+        {pendingSwitch && (
           <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between gap-2.5 text-xs">
             <div className="flex items-center gap-2.5">
               <span className="p-1.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
@@ -926,103 +936,103 @@ export function TeacherStudentsManager() {
           </div>
         )}
 
-
-        {/* View Switcher Tabs (Desktop Only) */}
-        <div className="hidden md:flex mt-5 items-center justify-between border-t border-zinc-200/70 pt-4 dark:border-white/10 flex-wrap gap-3">
-          <div className="flex items-center gap-1.5 rounded-xl bg-zinc-100/90 p-1 dark:bg-zinc-900">
-            <button
-              type="button"
-              onClick={() => setActiveView("rollcall")}
-              className={cn(
-                "rounded-lg px-3 py-1.5 text-xs font-bold transition-all",
-                activeView === "rollcall"
-                  ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-white"
-                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-              )}
-            >
-              Daily Roll Call ({selectedDate})
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveView("month_calendar")}
-              className={cn(
-                "rounded-lg px-3 py-1.5 text-xs font-bold transition-all flex items-center gap-1.5",
-                activeView === "month_calendar"
-                  ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-white"
-                  : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-              )}
-            >
-              <CalendarIcon className="size-3.5 text-blue-500" />
-              Monthly Class Calendar
-            </button>
-          </div>
-
-          {/* Class & Section selector */}
-          <div className="flex flex-wrap items-center gap-2">
-            {isAdmin && (
-              <div className="flex items-center gap-1.5 mr-1">
-                <span className="text-xs text-zinc-400 font-medium hidden lg:inline">Category:</span>
-                <div className="w-36">
-                  <AppSelect
-                    value={selectedWing}
-                    onChange={(nextWing) => {
-                      setSelectedWing(nextWing);
-                      const w = config.wings.find((x) => x.id === nextWing);
-                      if (w?.classes[0]) {
-                        setSelectedClass(w.classes[0]);
-                        const secs = getSectionsForClass(config, w.classes[0]);
-                        if (secs[0]) setSelectedSection(secs[0]);
-                      }
-                    }}
-                    options={config.wings.map((w) => ({ value: w.id, label: w.name }))}
-                    title="Select School Category"
-                  />
-                </div>
-              </div>
-            )}
-            <span className="text-xs text-zinc-400 font-medium hidden sm:inline">Class:</span>
-            <div className="w-40">
-              <AppSelect
-                value={selectedClass}
-                onChange={(nextClass) => handleSelectClass(nextClass)}
-                options={accessibleClasses.map((c) => {
-                  const isMyClass = c === user?.schoolClassId;
-                  const isSubstitute = myCoverages.some((cov) => cov.classId === c);
-                  const isApproved = approvedSwitch?.requestedClass === c;
-                  return {
-                    value: c,
-                    label: c,
-                    badge: isMyClass ? "Assigned" : isSubstitute ? "Substitute" : isApproved ? "Switch" : undefined,
-                  };
-                })}
-                title="Select Class"
-              />
-            </div>
-
-            <div className="w-32">
-              <AppSelect
-                value={selectedSection}
-                onChange={setSelectedSection}
-                options={accessibleSections.map((s) => ({ value: s, label: s }))}
-                title="Select Section"
-              />
-            </div>
-
-            {!isAdmin && (
-              <Button
+        {/* View Switcher Tabs (Desktop Only) - ONLY shown when class is assigned */}
+        {hasAssignedClass && (
+          <div className="hidden md:flex mt-5 items-center justify-between border-t border-zinc-200/70 pt-4 dark:border-white/10 flex-wrap gap-3">
+            <div className="flex items-center gap-1.5 rounded-xl bg-zinc-100/90 p-1 dark:bg-zinc-900">
+              <button
                 type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handleOpenSwitchModal()}
-                className="h-10 text-xs font-bold gap-1 px-3 rounded-xl border-blue-200 text-blue-700 dark:border-blue-900/50 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 shadow-xs cursor-pointer"
-                title="Request class switch approval from administration"
+                onClick={() => setActiveView("rollcall")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-bold transition-all",
+                  activeView === "rollcall"
+                    ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-white"
+                    : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                )}
               >
-                <Shuffle className="size-3.5" />
-                Switch
-              </Button>
-            )}
+                Daily Roll Call ({selectedDate})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("month_calendar")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-bold transition-all flex items-center gap-1.5",
+                  activeView === "month_calendar"
+                    ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-white"
+                    : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                )}
+              >
+                <CalendarIcon className="size-3.5 text-blue-500" />
+                Monthly Class Calendar
+              </button>
+            </div>
+
+            {/* Class & Section selector */}
+            <div className="flex flex-wrap items-center gap-2">
+              {isAdmin && (
+                <div className="flex items-center gap-1.5 mr-1">
+                  <span className="text-xs text-zinc-400 font-medium hidden lg:inline">Category:</span>
+                  <div className="w-36">
+                    <AppSelect
+                      value={selectedWing}
+                      onChange={(nextWing) => {
+                        setSelectedWing(nextWing);
+                        const w = config.wings.find((x) => x.id === nextWing);
+                        if (w?.classes[0]) {
+                          setSelectedClass(w.classes[0]);
+                          const secs = getSectionsForClass(config, w.classes[0]);
+                          if (secs[0]) setSelectedSection(secs[0]);
+                        }
+                      }}
+                      options={config.wings.map((w) => ({ value: w.id, label: w.name }))}
+                      title="Select School Category"
+                    />
+                  </div>
+                </div>
+              )}
+              <span className="text-xs text-zinc-400 font-medium hidden sm:inline">Class:</span>
+              <div className="w-40">
+                <AppSelect
+                  value={selectedClass}
+                  onChange={(nextClass) => handleSelectClass(nextClass)}
+                  options={accessibleClasses.map((c) => {
+                    const isMyClass = c === user?.schoolClassId || c === approvedSwitch?.requestedClass;
+                    const isSubstitute = myCoverages.some((cov) => cov.classId === c);
+                    return {
+                      value: c,
+                      label: c,
+                      badge: isMyClass ? "Assigned" : isSubstitute ? "Substitute" : undefined,
+                    };
+                  })}
+                  title="Select Class"
+                />
+              </div>
+
+              <div className="w-32">
+                <AppSelect
+                  value={selectedSection}
+                  onChange={setSelectedSection}
+                  options={accessibleSections.map((s) => ({ value: s, label: s }))}
+                  title="Select Section"
+                />
+              </div>
+
+              {!isAdmin && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleOpenSwitchModal()}
+                  className="h-10 text-xs font-bold gap-1 px-3 rounded-xl border-blue-200 text-blue-700 dark:border-blue-900/50 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 shadow-xs cursor-pointer"
+                  title="Request class switch approval from administration"
+                >
+                  <Shuffle className="size-3.5" />
+                  Switch
+                </Button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* If teacher is not assigned to any class, show empty state prompt */}
@@ -1193,13 +1203,12 @@ export function TeacherStudentsManager() {
                   value={selectedClass}
                   onChange={(nextClass) => handleSelectClass(nextClass)}
                   options={accessibleClasses.map((c) => {
-                    const isMyClass = c === user?.schoolClassId;
+                    const isMyClass = c === user?.schoolClassId || c === approvedSwitch?.requestedClass;
                     const isSubstitute = myCoverages.some((cov) => cov.classId === c);
-                    const isApproved = approvedSwitch?.requestedClass === c;
                     return {
                       value: c,
                       label: c,
-                      badge: isMyClass ? "Assigned" : isSubstitute ? "Substitute" : isApproved ? "Switch" : undefined,
+                      badge: isMyClass ? "Assigned" : isSubstitute ? "Substitute" : undefined,
                     };
                   })}
                   title="Select Class"

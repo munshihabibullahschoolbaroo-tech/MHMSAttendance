@@ -276,7 +276,7 @@ export function AttendanceCalendar({
   const zoneShort = workTimeZoneUiLabel(tz);
 
   return (
-    <Card className="rounded-2xl border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] shadow-sm overflow-hidden">
+    <Card className="rounded-2xl border-zinc-200/90 dark:border-white/10 bg-white dark:bg-zinc-900/60 shadow-sm overflow-hidden">
       <CardHeader className="border-b border-zinc-100 dark:border-white/5 pb-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
@@ -291,7 +291,7 @@ export function AttendanceCalendar({
           <div className="flex items-center justify-between sm:justify-end gap-2">
             <button
               type="button"
-              className="rounded-xl border border-zinc-200/90 p-2 hover:bg-zinc-100 active:scale-95 transition-all dark:border-white/10 dark:hover:bg-white/5 cursor-pointer"
+              className="rounded-xl border border-zinc-200/90 p-2 text-zinc-700 hover:bg-zinc-100 active:scale-95 transition-all dark:border-white/10 dark:text-zinc-300 dark:hover:bg-white/10 cursor-pointer"
               aria-label="Previous month"
               onClick={() => {
                 if (mode === "ad") {
@@ -316,7 +316,7 @@ export function AttendanceCalendar({
             </span>
             <button
               type="button"
-              className="rounded-xl border border-zinc-200/90 p-2 hover:bg-zinc-100 active:scale-95 transition-all dark:border-white/10 dark:hover:bg-white/5 cursor-pointer"
+              className="rounded-xl border border-zinc-200/90 p-2 text-zinc-700 hover:bg-zinc-100 active:scale-95 transition-all dark:border-white/10 dark:text-zinc-300 dark:hover:bg-white/10 cursor-pointer"
               aria-label="Next month"
               onClick={() => {
                 if (mode === "ad") {
@@ -342,19 +342,19 @@ export function AttendanceCalendar({
       <CardContent className="pt-4">
         {/* Month Summary Stat Pills */}
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-emerald-500/30 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400">
             <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
             On Time: {stats.onTime}
           </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-amber-500/30 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-400">
             <span className="flex h-1.5 w-1.5 rounded-full bg-amber-500" />
             Late: {stats.late}
           </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-red-500/30 bg-red-50 text-red-800 dark:bg-red-950/30 dark:text-red-400">
             <span className="flex h-1.5 w-1.5 rounded-full bg-red-500" />
             Absent: {stats.absent}
           </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border border-blue-500/30 bg-blue-50 text-blue-800 dark:bg-blue-950/30 dark:text-blue-400">
             <span className="flex h-1.5 w-1.5 rounded-full bg-blue-500" />
             Leaves: {stats.leaves}
           </span>
@@ -375,7 +375,7 @@ export function AttendanceCalendar({
           </div>
         ) : (
           <>
-            <div className="mb-2 grid grid-cols-7 gap-1.5 text-center text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+            <div className="mb-2 grid grid-cols-7 gap-1.5 text-center text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
               {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                 <div key={d}>{d}</div>
               ))}
@@ -387,20 +387,20 @@ export function AttendanceCalendar({
                     key={cell.key}
                     type="button"
                     className={cn(
-                      "flex aspect-square flex-col items-center justify-center rounded-xl border text-xs transition-all active:scale-95 hover:border-zinc-400 dark:hover:border-white/30 cursor-pointer",
-                      cell.isToday && "ring-2 ring-blue-500 ring-offset-1 dark:ring-offset-zinc-950",
+                      "flex aspect-square flex-col items-center justify-center rounded-xl border text-xs transition-all active:scale-95 cursor-pointer select-none",
+                      cell.isToday && "ring-2 ring-blue-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950 font-black",
                       cell.present && !cell.isLate &&
-                        "border-emerald-500/50 bg-emerald-500/15 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300 font-semibold shadow-xs",
+                        "border-emerald-500/40 bg-emerald-50/80 text-emerald-900 dark:border-emerald-500/40 dark:bg-emerald-950/40 dark:text-emerald-300 font-bold shadow-xs hover:border-emerald-500",
                       cell.present && cell.isLate &&
-                        "border-amber-500/50 bg-amber-500/15 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 font-semibold shadow-xs",
+                        "border-amber-500/40 bg-amber-50/80 text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300 font-bold shadow-xs hover:border-amber-500",
                       cell.onLeave && !cell.present &&
-                        "border-blue-500/40 bg-blue-500/15 text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300 font-semibold shadow-xs",
+                        "border-blue-500/40 bg-blue-50/80 text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/40 dark:text-blue-300 font-bold shadow-xs hover:border-blue-500",
                       cell.isBeforeJoin && !cell.present && !cell.onLeave &&
-                        "border-dashed border-zinc-200/60 bg-zinc-50/30 text-zinc-400 dark:border-white/5 dark:bg-transparent dark:text-zinc-600 opacity-50",
+                        "border-dashed border-zinc-200 bg-zinc-50/60 text-zinc-400 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-500 hover:border-zinc-300 dark:hover:border-white/20",
                       cell.missed && !cell.present && !cell.onLeave &&
-                        "border-red-500/40 bg-red-500/15 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 font-semibold",
+                        "border-red-500/40 bg-red-50/80 text-red-900 dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300 font-bold shadow-xs hover:border-red-500",
                       !cell.isBeforeJoin && !cell.present && !cell.missed && !cell.onLeave &&
-                        "border-zinc-200/80 bg-zinc-50/90 text-zinc-600 dark:border-white/10 dark:bg-white/[0.02] dark:text-zinc-400"
+                        "border-zinc-200/90 bg-white text-zinc-800 hover:bg-zinc-50 hover:border-zinc-300 dark:border-white/10 dark:bg-white/[0.03] dark:text-zinc-200 dark:hover:bg-white/[0.08]"
                     )}
                     title={
                       cell.onLeave
@@ -429,17 +429,17 @@ export function AttendanceCalendar({
                       {mode === "bs" ? dayNumberForMode(cell.key, mode) : cell.day}
                     </span>
                     {cell.present && !cell.isLate ? (
-                      <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400">✓</span>
+                      <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400">✓</span>
                     ) : cell.present && cell.isLate ? (
                       <span className="text-[9px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-tighter">
                         Late
                       </span>
                     ) : cell.onLeave ? (
-                      <span className="text-[9px] font-extrabold text-blue-600 dark:text-blue-400 uppercase tracking-tighter">
+                      <span className="text-[9px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-tighter">
                         Leave
                       </span>
                     ) : cell.missed ? (
-                      <span className="text-[10px] font-extrabold text-red-600 dark:text-red-400">✕</span>
+                      <span className="text-[10px] font-black text-red-600 dark:text-red-400">✕</span>
                     ) : null}
                   </button>
                 ) : (

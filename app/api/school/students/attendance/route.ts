@@ -229,11 +229,11 @@ export async function POST(req: Request) {
 
   await db.collection("studentAttendance").doc(docId).set(attendanceData, { merge: true });
 
-  // If this was an approved switch request, consume it now so teacher can only edit once
+  // If this was an approved switch request, record that attendance was submitted
   if (approvedSwitchDoc) {
     await approvedSwitchDoc.ref.update({
-      status: "consumed",
-      usedAt: FieldValue.serverTimestamp(),
+      attendanceSubmitted: true,
+      lastAttendanceAt: FieldValue.serverTimestamp(),
     });
   }
 
@@ -241,7 +241,7 @@ export async function POST(req: Request) {
     ok: true,
     docId,
     summary: attendanceData.summary,
-    consumedSwitch: approvedSwitchDoc ? true : false,
+    consumedSwitch: false,
     assignedClass: userData.schoolClassId || null,
     assignedSection: userData.schoolSectionId || null,
   });

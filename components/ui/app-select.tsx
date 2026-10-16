@@ -54,6 +54,7 @@ export function AppSelect({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const popoverRef = React.useRef<HTMLDivElement>(null);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
 
   const [popoverCoords, setPopoverCoords] = React.useState<{
     top?: number;
@@ -61,7 +62,7 @@ export function AppSelect({
     left: number;
     width: number;
     maxHeight: number;
-  }>({ left: 0, width: 240, maxHeight: 400 });
+  }>({ left: 0, width: 240, maxHeight: 250 });
 
   // Normalize options to SelectOption objects
   const normalizedOptions: SelectOption[] = React.useMemo(() => {
@@ -74,6 +75,7 @@ export function AppSelect({
   }, [options]);
 
   const selectedOption = normalizedOptions.find((o) => o.value === value);
+  const isAutoSearchable = searchable || normalizedOptions.length > 12;
 
   React.useEffect(() => {
     setMounted(true);
@@ -92,27 +94,33 @@ export function AppSelect({
     const vw = window.innerWidth;
     const spaceBelow = vh - rect.bottom - 16;
     const spaceAbove = rect.top - 16;
-    const openUpward = spaceBelow < 260 && spaceAbove > spaceBelow;
+
+    // Static bounded max height for dropdown card (comfortable size on desktop/tablets, ~6-7 items visible)
+    const preferredMaxHeight = isAutoSearchable ? 290 : 250;
+    const openUpward = spaceBelow < 200 && spaceAbove > spaceBelow;
 
     const width = rect.width;
-    const left = Math.max(8, Math.min(rect.left, vw - width - 8));
+    const left =
+      align === "right"
+        ? Math.max(8, Math.min(rect.right - width, vw - width - 8))
+        : Math.max(8, Math.min(rect.left, vw - width - 8));
 
     if (openUpward) {
       setPopoverCoords({
         bottom: vh - rect.top + 6,
         left,
         width,
-        maxHeight: Math.min(spaceAbove, 600),
+        maxHeight: Math.min(spaceAbove, preferredMaxHeight),
       });
     } else {
       setPopoverCoords({
         top: rect.bottom + 6,
         left,
         width,
-        maxHeight: Math.min(spaceBelow, 600),
+        maxHeight: Math.min(spaceBelow, preferredMaxHeight),
       });
     }
-  }, []);
+  }, [isAutoSearchable]);
 
   React.useEffect(() => {
     if (!isOpen || isMobile) return;
@@ -153,10 +161,77 @@ export function AppSelect({
     }
   }, [isOpen]);
 
-  // Close desktop dropdown on click outside
+  // Auto-scroll to selected option when opened
+  React.useEffect(() => {
+    if (isOpen && !isMobile) {
+      const timer = setTimeout(() => {
+        const selectedEl = listRef.current?.querySelector<HTMLElement>('[data-selected="true"]');
+        if (selectedEl) {
+          selectedEl.scrollIntoView({ block: "nearest" });
+        }
+      }, 40);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, isMobile]);
+
+  // Mobile list ref & auto-scroll
+  const mobileListRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (isOpen && isMobile) {
+      const timer = setTimeout(() => {
+        const selectedEl = mobileListRef.current?.querySelector<HTMLElement>('[data-selected="true"]');
+        if (selectedEl) {
+          selectedEl.scrollIntoView({ block: "nearest" });
+        }
+      }, 40);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, isMobile]);
+
+  // Lock body scroll when mobile drawer is open to prevent page bounce/rubber-banding
+  React.useEffect(() => {
+    if (!isOpen || !isMobile) return;
+    const originalOverflow = document.body.style.overflow;
+    const originalTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = "hidden";
+    document.body.style.touchAction = "none";
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.touchAction = originalTouchAction;
+    };
+  }, [isOpen, isMobile]);
+
+  // Track visual viewport on mobile so virtual keyboard does not scroll the bottom sheet card
+  const [visualViewportState, setVisualViewportState] = React.useState<{
+    height: number;
+    offsetTop: number;
+  } | null>(null);
+
+  React.useEffect(() => {
+    if (!isOpen || !isMobile || typeof window === "undefined") return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const updateViewport = () => {
+      setVisualViewportState({
+        height: vv.height,
+        offsetTop: vv.offsetTop,
+      });
+    };
+
+    updateViewport();
+    vv.addEventListener("resize", updateViewport);
+    vv.addEventListener("scroll", updateViewport);
+    return () => {
+      vv.removeEventListener("resize", updateViewport);
+      vv.removeEventListener("scroll", updateViewport);
+    };
+  }, [isOpen, isMobile]);
+
+  // Close desktop/tablet dropdown on click or tap outside
   React.useEffect(() => {
     if (!isOpen || isMobile) return;
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
       const target = e.target as Node;
       if (
         containerRef.current &&
@@ -168,15 +243,17 @@ export function AppSelect({
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
   }, [isOpen, isMobile]);
 
   const handleSelect = (val: string) => {
     onChange(val);
     setIsOpen(false);
   };
-
-  const isAutoSearchable = searchable || normalizedOptions.length > 12;
 
   return (
     <div ref={containerRef} className="relative inline-block w-full">
@@ -255,20 +332,13 @@ export function AppSelect({
               </div>
             )}
 
-            {/* Options List: when options <= 15, NO SCROLLING! Fully displayed with zero clipping */}
+            {/* Options List: bounded height and smoothly scrollable for desktop & tablets */}
             <div
+              ref={listRef}
               style={{
-                maxHeight:
-                  filteredOptions.length <= 15
-                    ? undefined
-                    : `${Math.max(160, popoverCoords.maxHeight - (isAutoSearchable ? 54 : 18))}px`,
+                maxHeight: `${Math.max(120, popoverCoords.maxHeight - (isAutoSearchable ? 52 : 12))}px`,
               }}
-              className={cn(
-                "space-y-0.5 p-0.5 custom-scrollbar",
-                filteredOptions.length <= 15
-                  ? "max-h-none overflow-y-visible"
-                  : "overflow-y-auto"
-              )}
+              className="space-y-0.5 p-0.5 overflow-y-auto overscroll-contain custom-scrollbar"
             >
               {filteredOptions.length === 0 ? (
                 <div className="py-4 text-center text-xs text-zinc-400">No matching options</div>
@@ -279,6 +349,7 @@ export function AppSelect({
                     <button
                       key={opt.value}
                       type="button"
+                      data-selected={isSelected ? "true" : undefined}
                       disabled={opt.disabled}
                       onClick={() => handleSelect(opt.value)}
                       className={cn(
@@ -330,13 +401,27 @@ export function AppSelect({
         createPortal(
           <AnimatePresence>
             {isOpen && (
-              <div className="fixed inset-0 z-[100500] flex flex-col justify-end">
+              <div
+                style={
+                  visualViewportState
+                    ? {
+                        position: "fixed",
+                        top: `${visualViewportState.offsetTop}px`,
+                        height: `${visualViewportState.height}px`,
+                        left: 0,
+                        right: 0,
+                      }
+                    : undefined
+                }
+                className="fixed inset-0 z-[100500] flex flex-col justify-end overflow-hidden overscroll-none"
+              >
                 {/* Backdrop */}
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   onClick={() => setIsOpen(false)}
+                  onTouchMove={(e) => e.preventDefault()}
                   className="fixed inset-0 bg-black/70 backdrop-blur-xs"
                 />
 
@@ -346,13 +431,19 @@ export function AppSelect({
                   animate={{ y: 0 }}
                   exit={{ y: "100%" }}
                   transition={{ type: "spring", damping: 28, stiffness: 320 }}
-                  className="relative z-10 w-full rounded-t-3xl border-t border-zinc-200 bg-white p-5 shadow-2xl dark:border-white/10 dark:bg-zinc-950 max-h-[85vh] flex flex-col"
+                  className="relative z-10 w-full rounded-t-3xl border-t border-zinc-200 bg-white p-5 pb-6 shadow-2xl dark:border-white/10 dark:bg-zinc-950 max-h-[85vh] max-h-[85dvh] flex flex-col overflow-hidden"
                 >
                   {/* Drag Handle */}
-                  <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                  <div
+                    onTouchMove={(e) => e.preventDefault()}
+                    className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700 shrink-0"
+                  />
 
                   {/* Header */}
-                  <div className="mb-3 flex items-center justify-between border-b border-zinc-100 pb-3 dark:border-white/10">
+                  <div
+                    onTouchMove={(e) => e.preventDefault()}
+                    className="mb-3 flex items-center justify-between border-b border-zinc-100 pb-3 dark:border-white/10 shrink-0"
+                  >
                     <h3 className="font-extrabold text-base text-zinc-900 dark:text-zinc-100">{resolvedTitle}</h3>
                     <button
                       type="button"
@@ -365,7 +456,10 @@ export function AppSelect({
 
                   {/* Mobile Search Bar if searchable */}
                   {isAutoSearchable && (
-                    <div className="mb-3">
+                    <div
+                      onTouchMove={(e) => e.preventDefault()}
+                      className="mb-3 shrink-0"
+                    >
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-zinc-400" />
                         <input
@@ -374,6 +468,10 @@ export function AppSelect({
                           value={query}
                           onChange={(e) => setQuery(e.target.value)}
                           placeholder={searchPlaceholder}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          spellCheck="false"
                           className="w-full h-10 pl-9 pr-8 text-xs rounded-xl border border-zinc-200 bg-zinc-50 dark:border-white/10 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-blue-500"
                         />
                         {query && (
@@ -389,8 +487,12 @@ export function AppSelect({
                     </div>
                   )}
 
-                  {/* Options List */}
-                  <div className="overflow-y-auto space-y-1 flex-1 py-1 custom-scrollbar">
+                  {/* Options List: strictly scrollable list */}
+                  <div
+                    ref={mobileListRef}
+                    style={{ WebkitOverflowScrolling: "touch" }}
+                    className="overflow-y-auto overscroll-contain space-y-1 flex-1 min-h-0 py-1 custom-scrollbar"
+                  >
                     {filteredOptions.length === 0 ? (
                       <div className="py-8 text-center text-xs text-zinc-400">No matching options</div>
                     ) : (
@@ -400,6 +502,7 @@ export function AppSelect({
                           <button
                             key={opt.value}
                             type="button"
+                            data-selected={isSelected ? "true" : undefined}
                             disabled={opt.disabled}
                             onClick={() => handleSelect(opt.value)}
                             className={cn(

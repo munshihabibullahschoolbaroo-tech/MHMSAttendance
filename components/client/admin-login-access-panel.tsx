@@ -18,6 +18,7 @@ import {
   Users,
   X,
   XCircle,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -169,12 +170,23 @@ export function AdminLoginAccessPanel() {
     }
   };
 
+  const [filter, setFilter] = React.useState<"pending" | "approved" | "rejected" | "all">("pending");
+
   const pending = React.useMemo(
     () =>
       users.filter(
         (r) =>
           (r.role === "employee" || r.role === "staff" || !r.role) &&
           r.workspaceAccessStatus === "pending"
+      ),
+    [users]
+  );
+  const approved = React.useMemo(
+    () =>
+      users.filter(
+        (r) =>
+          (r.role === "employee" || r.role === "staff" || !r.role) &&
+          r.workspaceAccessStatus === "approved"
       ),
     [users]
   );
@@ -188,255 +200,257 @@ export function AdminLoginAccessPanel() {
     [users]
   );
 
-  return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2">
-        <div>
-          <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-            <UserCheck className="size-5 text-blue-500" />
-            Staff Onboarding Approvals
-          </h2>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            Review detailed onboarding profiles, staff designations, and grant dashboard access.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20">
-            <Clock className="size-3.5" />
-            {pending.length} Pending
-          </span>
-        </div>
-      </div>
-      <Separator />
+  const displayedUsers = React.useMemo(() => {
+    if (filter === "pending") return pending;
+    if (filter === "approved") return approved;
+    if (filter === "rejected") return rejected;
+    return users.filter((r) => r.role === "employee" || r.role === "staff" || !r.role);
+  }, [filter, pending, approved, rejected, users]);
 
+  return (
+    <div className="space-y-6">
       {err ? (
         <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400 text-xs font-medium">
           {err}
         </div>
       ) : null}
 
-      {/* PENDING APPROVALS CARD */}
-      <Card className="border-zinc-200/90 shadow-sm dark:border-white/10">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+      <Card className="rounded-2xl border border-zinc-200/80 bg-white shadow-xs dark:border-white/10 dark:bg-zinc-950">
+        <CardHeader className="px-4 sm:px-6 pt-5 pb-4 border-b border-zinc-100 dark:border-white/5">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div>
-              <CardTitle className="text-base font-bold flex items-center gap-2">
-                Pending Login Access Requests
+              <CardTitle className="text-lg font-bold flex items-center gap-2">
+                <UserCheck className="size-5 text-blue-500" />
+                Staff Onboarding Approvals
+                {pending.length > 0 && (
+                  <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 text-xs px-2.5 py-0.5 font-bold">
+                    {pending.length} Pending
+                  </span>
+                )}
               </CardTitle>
-              <CardDescription className="text-xs mt-0.5">
-                New staff members who completed onboarding setup and are waiting for administrator activation.
+              <CardDescription className="text-xs mt-1">
+                Review detailed onboarding profiles, staff designations, and grant dashboard access.
               </CardDescription>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Status filter tabs */}
+              <div className="inline-flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900 border border-zinc-200/80 dark:border-white/10 text-xs">
+                {(["pending", "approved", "rejected", "all"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setFilter(f)}
+                    className={cn(
+                      "rounded-lg px-3 py-1 font-bold capitalize transition-all cursor-pointer",
+                      filter === f
+                        ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
+                        : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400"
+                    )}
+                  >
+                    {f}
+                    {f === "pending" && pending.length > 0 && ` (${pending.length})`}
+                  </button>
+                ))}
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void load()}
+                disabled={loading}
+                className="rounded-xl h-8 px-2.5 gap-1.5 text-xs cursor-pointer"
+              >
+                <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+                <span>Refresh</span>
+              </Button>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+
+        <CardContent className="px-4 sm:px-6 py-5">
           {loading ? (
-            <TableRowsSkeleton rows={3} />
-          ) : pending.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-8 text-center rounded-xl bg-zinc-50/50 dark:bg-white/[0.01] border border-dashed border-zinc-200 dark:border-white/10">
-              <CheckCircle2 className="size-10 text-emerald-500/60 mb-2" />
+            <TableRowsSkeleton rows={4} />
+          ) : displayedUsers.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-zinc-200 p-12 text-center dark:border-white/10">
+              <CheckCircle2 className="size-8 text-emerald-500/60 mx-auto mb-2" />
               <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
                 All Caught Up!
               </p>
-              <p className="text-xs text-zinc-500 max-w-sm mt-0.5">
-                No staff members are currently waiting for onboarding approval.
+              <p className="text-xs text-zinc-500 max-w-sm mx-auto mt-1">
+                No staff members with {filter !== "all" ? `status "${filter}"` : "this criteria"}.
               </p>
             </div>
           ) : (
-            <ul className="space-y-3">
-              {pending.map((r) => {
-                const displayName = r.name?.trim() || r.email.split("@")[0] || "Staff Member";
-                const initials = displayName
-                  .split(" ")
-                  .map((w) => w[0])
-                  .filter(Boolean)
-                  .slice(0, 2)
-                  .join("")
-                  .toUpperCase() || "T";
+            <div className="space-y-3 max-h-[calc(100vh-340px)] min-h-[280px] overflow-y-auto pr-1 sm:pr-2">
+              <ul className="space-y-3">
+                {displayedUsers.map((r) => {
+                  const displayName = r.name?.trim() || r.email.split("@")[0] || "Staff Member";
+                  const isPending = r.workspaceAccessStatus === "pending";
+                  const isRejected = r.workspaceAccessStatus === "rejected";
+                  const isApproved = r.workspaceAccessStatus === "approved";
 
-                return (
-                  <li
-                    key={r.id}
-                    className="flex flex-col gap-3.5 rounded-xl border border-zinc-200/90 bg-white p-4 shadow-xs dark:border-white/10 dark:bg-zinc-900/60 transition-all hover:border-blue-500/40 hover:shadow-sm"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 min-w-0">
-                        {/* Avatar */}
-                        <UserAvatar
-                          name={displayName}
-                          photoUrl={r.photoUrl}
-                          className="size-10 shrink-0"
-                          textClassName="text-xs"
-                        />
+                  return (
+                    <li
+                      key={r.id}
+                      className="flex flex-col gap-3.5 rounded-xl border border-zinc-200/90 bg-white p-4 shadow-xs dark:border-white/10 dark:bg-zinc-900/60 transition-all hover:border-blue-500/40 hover:shadow-sm"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 min-w-0">
+                          {/* Avatar */}
+                          <UserAvatar
+                            name={displayName}
+                            photoUrl={r.photoUrl}
+                            className="size-10 shrink-0"
+                            textClassName="text-xs"
+                          />
 
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-bold text-zinc-900 dark:text-zinc-100 text-sm">
-                              {displayName}
-                            </span>
-                            {r.employeeId && (
-                              <span className="rounded-md bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-[11px] font-mono font-bold text-zinc-700 dark:text-zinc-300 border border-zinc-200/60 dark:border-white/10">
-                                {r.employeeId}
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-bold text-zinc-900 dark:text-zinc-100 text-sm">
+                                {displayName}
                               </span>
-                            )}
-                            {r.isClassTeacher && (
-                              <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 border border-emerald-500/25">
-                                Class Teacher
-                              </span>
-                            )}
-                          </div>
+                              {r.employeeId && (
+                                <span className="rounded-md bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-[11px] font-mono font-bold text-zinc-700 dark:text-zinc-300 border border-zinc-200/60 dark:border-white/10">
+                                  {r.employeeId}
+                                </span>
+                              )}
+                              {isPending && (
+                                <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[10px] font-bold px-2 py-0.5 border border-amber-500/30">
+                                  Pending Review
+                                </span>
+                              )}
+                              {isApproved && (
+                                <span className="rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold px-2 py-0.5 border border-emerald-500/30">
+                                  Approved
+                                </span>
+                              )}
+                              {isRejected && (
+                                <span className="rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[10px] font-bold px-2 py-0.5 border border-rose-500/30">
+                                  Rejected
+                                </span>
+                              )}
+                              {r.isClassTeacher && (
+                                <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 border border-emerald-500/25">
+                                  Class Teacher
+                                </span>
+                              )}
+                            </div>
 
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-                            <span className="flex items-center gap-1 truncate">
-                              <Mail className="size-3 text-zinc-400 shrink-0" />
-                              {r.email}
-                            </span>
-                            {r.phone && (
-                              <span className="flex items-center gap-1">
-                                <Phone className="size-3 text-zinc-400 shrink-0" />
-                                {r.phone}
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
+                              <span className="flex items-center gap-1 truncate">
+                                <Mail className="size-3 text-zinc-400 shrink-0" />
+                                {r.email}
                               </span>
-                            )}
-                          </div>
+                              {r.phone && (
+                                <span className="flex items-center gap-1">
+                                  <Phone className="size-3 text-zinc-400 shrink-0" />
+                                  {r.phone}
+                                </span>
+                              )}
+                            </div>
 
-                          {/* Onboarding Summary Badges */}
-                          <div className="flex flex-wrap items-center gap-1.5 pt-1.5">
-                            {r.schoolWingId && (
-                              <span className="inline-flex items-center gap-1 rounded-lg bg-purple-500/10 px-2 py-0.5 text-[11px] font-semibold text-purple-700 dark:text-purple-300 border border-purple-500/20">
-                                <Building2 className="size-3 text-purple-500" />
-                                {formatWing(r.schoolWingId)}
-                              </span>
-                            )}
+                            {/* Onboarding Summary Badges */}
+                            <div className="flex flex-wrap items-center gap-1.5 pt-1.5">
+                              {r.schoolWingId && (
+                                <span className="inline-flex items-center gap-1 rounded-lg bg-purple-500/10 px-2 py-0.5 text-[11px] font-semibold text-purple-700 dark:text-purple-300 border border-purple-500/20">
+                                  <Building2 className="size-3 text-purple-500" />
+                                  {formatWing(r.schoolWingId)}
+                                </span>
+                              )}
 
-                            {(r.designation || r.position) && (
-                              <span className="inline-flex items-center gap-1 rounded-lg bg-blue-500/10 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:text-blue-300 border border-blue-500/20">
-                                <GraduationCap className="size-3 text-blue-500" />
-                                {r.designation || formatPosition(r.position)}
-                              </span>
-                            )}
+                              {(r.designation || r.position) && (
+                                <span className="inline-flex items-center gap-1 rounded-lg bg-blue-500/10 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:text-blue-300 border border-blue-500/20">
+                                  <GraduationCap className="size-3 text-blue-500" />
+                                  {r.designation || formatPosition(r.position)}
+                                </span>
+                              )}
 
-                            {r.isClassTeacher && r.schoolClassId && (
-                              <span className="inline-flex items-center gap-1 rounded-lg bg-teal-500/10 px-2 py-0.5 text-[11px] font-semibold text-teal-700 dark:text-teal-300 border border-teal-500/20">
-                                Class: {r.schoolClassId} ({r.schoolSectionId || "A"})
-                              </span>
-                            )}
+                              {r.isClassTeacher && r.schoolClassId && (
+                                <span className="inline-flex items-center gap-1 rounded-lg bg-teal-500/10 px-2 py-0.5 text-[11px] font-semibold text-teal-700 dark:text-teal-300 border border-teal-500/20">
+                                  Class: {r.schoolClassId} ({r.schoolSectionId || "A"})
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      {/* Action buttons */}
-                      <div className="flex shrink-0 flex-wrap items-center gap-2 pt-2 sm:pt-0">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setSelectedUser(r)}
-                          className="h-8 text-xs gap-1.5 border-blue-500/30 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 font-semibold cursor-pointer"
-                        >
-                          <Eye className="size-3.5 text-blue-500" />
-                          View Details
-                        </Button>
+                        {/* Action buttons */}
+                        <div className="flex shrink-0 flex-wrap items-center gap-2 pt-2 sm:pt-0">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSelectedUser(r)}
+                            className="h-8 text-xs gap-1.5 border-blue-500/30 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 font-semibold cursor-pointer"
+                          >
+                            <Eye className="size-3.5 text-blue-500" />
+                            View Details
+                          </Button>
 
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={workspaceBusy !== null}
-                          onClick={() => void setWorkspaceAccess(r.id, "approve")}
-                          className="h-8 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs cursor-pointer"
-                        >
-                          {workspaceBusy === `${r.id}approve` ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="size-3.5" />
+                          {isPending && (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={workspaceBusy !== null}
+                                onClick={() => void setWorkspaceAccess(r.id, "approve")}
+                                className="h-8 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs cursor-pointer"
+                              >
+                                {workspaceBusy === `${r.id}approve` ? (
+                                  <Loader2 className="size-3.5 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="size-3.5" />
+                                )}
+                                Approve
+                              </Button>
+
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={workspaceBusy !== null}
+                                onClick={() => void setWorkspaceAccess(r.id, "reject")}
+                                className="h-8 text-xs gap-1.5 border-zinc-200 dark:border-white/10 text-rose-600 hover:bg-rose-50 hover:border-rose-500/30 dark:hover:bg-rose-950/20 font-semibold cursor-pointer"
+                              >
+                                {workspaceBusy === `${r.id}reject` ? (
+                                  <Loader2 className="size-3.5 animate-spin" />
+                                ) : (
+                                  <XCircle className="size-3.5" />
+                                )}
+                                Reject
+                              </Button>
+                            </>
                           )}
-                          Approve
-                        </Button>
 
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={workspaceBusy !== null}
-                          onClick={() => void setWorkspaceAccess(r.id, "reject")}
-                          className="h-8 text-xs gap-1.5 border-zinc-200 dark:border-white/10 text-red-600 hover:bg-red-50 hover:border-red-500/30 dark:hover:bg-red-950/20 font-semibold cursor-pointer"
-                        >
-                          {workspaceBusy === `${r.id}reject` ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            <XCircle className="size-3.5" />
+                          {isRejected && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={workspaceBusy !== null}
+                              onClick={() => void setWorkspaceAccess(r.id, "approve")}
+                              className="h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 font-semibold cursor-pointer"
+                            >
+                              {workspaceBusy === `${r.id}approve` ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="size-3.5" />
+                              )}
+                              Re-Approve Access
+                            </Button>
                           )}
-                          Reject
-                        </Button>
+                        </div>
                       </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
         </CardContent>
       </Card>
-
-      {/* REJECTED / SUSPENDED ACCESS */}
-      {rejected.length > 0 && (
-        <Card className="border-zinc-200/90 shadow-sm dark:border-white/10">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-              <ShieldAlert className="size-4 text-red-500" />
-              Rejected Access Records ({rejected.length})
-            </CardTitle>
-            <CardDescription className="text-xs">
-              Teachers whose login request was previously rejected. You can review details or re-approve them anytime.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-3">
-              {rejected.map((r) => (
-                <li
-                  key={r.id}
-                  className="flex flex-col gap-3 rounded-xl border border-red-500/20 bg-red-500/[0.02] p-3.5 dark:border-red-500/20 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-zinc-900 dark:text-zinc-100 text-sm">
-                        {r.name || r.email.split("@")[0]}
-                      </p>
-                      {r.employeeId && (
-                        <span className="rounded-md bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-[10px] font-mono font-medium text-zinc-600 dark:text-zinc-300">
-                          {r.employeeId}
-                        </span>
-                      )}
-                    </div>
-                    <p className="truncate text-xs text-zinc-500 mt-0.5">{r.email}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setSelectedUser(r)}
-                      className="h-8 text-xs gap-1.5 cursor-pointer"
-                    >
-                      <Eye className="size-3.5" />
-                      Details
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={workspaceBusy !== null}
-                      onClick={() => void setWorkspaceAccess(r.id, "approve")}
-                      className="h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 cursor-pointer"
-                    >
-                      {workspaceBusy === `${r.id}approve` ? "…" : "Approve Access"}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
 
       {/* FULL ONBOARDING DETAILS MODAL */}
       {mounted &&

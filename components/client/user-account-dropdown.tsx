@@ -26,8 +26,8 @@ export function UserAccountDropdown({
         <button
           type="button"
           className={cn(
-            "flex max-w-[min(50vw,240px)] items-center gap-2 rounded-full border border-zinc-200/90 bg-white/90 py-1 transition hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
-            hideAvatar ? "px-3.5 py-1.5" : "pl-1 pr-2.5",
+            "group relative flex max-w-[min(50vw,240px)] items-center gap-2 rounded-full bg-white/10 dark:bg-white/[0.08] backdrop-blur-xl border border-white/20 dark:border-white/15 text-zinc-800 dark:text-zinc-100 shadow-sm transition-all duration-300 hover:bg-white/20 dark:hover:bg-white/15 hover:scale-105 active:scale-95 cursor-pointer",
+            hideAvatar ? "px-3.5 py-1.5" : "pl-1 pr-2.5 py-0.5",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
           )}
           aria-label="Account menu"
@@ -36,13 +36,13 @@ export function UserAccountDropdown({
             <UserAvatar
               name={user.name}
               photoUrl={user.photoUrl}
-              className="size-8 md:size-8.5 shrink-0"
+              className="size-7.5 sm:size-8 md:size-8.5 shrink-0"
               textClassName="text-xs"
             />
           )}
-          <span className="min-w-0 flex-1 truncate text-left text-sm font-medium hidden md:inline-block">{user.name}</span>
-          <span className="min-w-0 flex-1 truncate text-left text-sm font-medium md:hidden">{user.name.split(" ")[0]?.slice(0, 10)}</span>
-          <ChevronDown className="size-4 shrink-0 opacity-60" aria-hidden />
+          <span className="min-w-0 flex-1 truncate text-left text-xs sm:text-sm font-semibold hidden md:inline-block">{user.name}</span>
+          <span className="min-w-0 flex-1 truncate text-left text-xs sm:text-sm font-semibold md:hidden">{user.name.split(" ")[0]?.slice(0, 10)}</span>
+          <ChevronDown className="size-3.5 sm:size-4 shrink-0 opacity-70 group-hover:opacity-100 transition-opacity" aria-hidden />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>

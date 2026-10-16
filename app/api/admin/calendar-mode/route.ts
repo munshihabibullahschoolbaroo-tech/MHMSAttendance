@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
   await adminDb().doc("system/appSettings").set(
     {
-      calendarMode: parsed.data.calendarMode,
+      calendarMode: "ad",
       calendarModeUpdatedAt: FieldValue.serverTimestamp(),
       calendarModeUpdatedBy: auth.decoded.uid,
     },
@@ -37,5 +37,5 @@ export async function POST(req: Request) {
   );
 
   invalidateCalendarModeCache();
-  return Response.json({ ok: true, mode: parsed.data.calendarMode });
+  return Response.json({ ok: true, mode: "ad" });
 }

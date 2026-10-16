@@ -363,13 +363,19 @@ async function fetchTrackingPingsForWorkerDay(
   try {
     const dayStart = DateTime.fromISO(day, { zone: workerTimeZone }).startOf("day");
     const dayEnd = dayStart.plus({ days: 1 });
+    const startMs = dayStart.toMillis();
+    const endMs = dayEnd.toMillis();
+
+    // Query worker pings and filter/sort in memory to avoid requiring a composite index
     const snap = await db
       .collection("live_tracking_logs")
       .where("workerId", "==", workerId)
-      .where("at", ">=", dayStart.toJSDate())
-      .where("at", "<", dayEnd.toJSDate())
-      .orderBy("at", "asc")
-      .get();
+      .limit(200)
+      .get()
+      .catch(() => null);
+
+    if (!snap || snap.empty) return [];
+
     return snap.docs
       .map((d) => {
         const x = d.data() as Record<string, unknown>;
@@ -377,11 +383,12 @@ async function fetchTrackingPingsForWorkerDay(
         const latitude = Number(x.latitude);
         const longitude = Number(x.longitude);
         if (atMs == null || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+        if (atMs < startMs || atMs >= endMs) return null;
         return { atMs, latitude, longitude };
       })
-      .filter((x): x is TrackingPing => !!x);
-  } catch (err) {
-    console.warn("[fetchTrackingPingsForWorkerDay] non-critical tracking pings query error:", err);
+      .filter((x): x is TrackingPing => !!x)
+      .sort((a, b) => a.atMs - b.atMs);
+  } catch {
     return [];
   }
 }
@@ -504,16 +511,22 @@ export type WorkerDayDetailResult =
       } | null;
     };
 
+export type PreloadedWorkerContext = {
+  userSnap?: any;
+  leavesSnap?: any;
+};
+
 export async function buildWorkerDayDetail(
   db: Firestore,
   workerId: string,
-  day: string
+  day: string,
+  preloaded?: PreloadedWorkerContext
 ): Promise<WorkerDayDetailResult> {
   if (!DAY_RE.test(day)) {
     throw new Error("Invalid day");
   }
 
-  const userSnap = await db.collection("users").doc(workerId).get();
+  const userSnap = preloaded?.userSnap ?? (await db.collection("users").doc(workerId).get());
   const workerTz = timeZoneFromUserSnapshot(userSnap);
 
   const [overtime, offsite, attSnap, trackingPings, leavesSnap, teacherSessionSnap] = await Promise.all([
@@ -521,12 +534,13 @@ export async function buildWorkerDayDetail(
     fetchOffsiteForWorkerDay(db, workerId, day, workerTz),
     db.collection("attendance").doc(`${workerId}_${day}`).get(),
     fetchTrackingPingsForWorkerDay(db, workerId, day, workerTz),
-    db
-      .collection("leaveRequests")
-      .where("teacherId", "==", workerId)
-      .where("status", "==", "approved")
-      .get()
-      .catch(() => ({ docs: [] })),
+    preloaded?.leavesSnap ??
+      db
+        .collection("leaveRequests")
+        .where("teacherId", "==", workerId)
+        .where("status", "==", "approved")
+        .get()
+        .catch(() => ({ docs: [] })),
     db
       .collection("teacherSessions")
       .doc(`${workerId}_${day}`)
@@ -545,6 +559,10 @@ export async function buildWorkerDayDetail(
 
   for (const d of leavesSnap.docs) {
     const lData = d.data();
+    // Late sign-out is an attendance check-out event, NOT a leave
+    if (lData.type === "late_sign_out" || lData.isLateSignOut) {
+      continue;
+    }
     const start = String(lData.startDate ?? "");
     const end = String(lData.endDate ?? start);
     if (day >= start && day <= end) {
@@ -594,8 +612,9 @@ export async function buildWorkerDayDetail(
 
   // If teacherSessions exists (canonical MHMS attendance store), build rich teacher session & timeline
   if (tsData) {
-    const checkInMs = timeToMs(tsData.checkInTime);
-    const checkOutMs = timeToMs(tsData.checkOutTime);
+    const isExplicitAbsent = tsData.status === "absent" || tsData.missedSignOut === true;
+    const checkInMs = isExplicitAbsent ? null : timeToMs(tsData.checkInTime);
+    const checkOutMs = isExplicitAbsent ? null : timeToMs(tsData.checkOutTime);
     const isToday = day === DateTime.now().setZone(DEFAULT_ATTENDANCE_TIME_ZONE).toISODate();
     const totalSessionMs =
       checkInMs != null && checkOutMs != null && checkOutMs >= checkInMs

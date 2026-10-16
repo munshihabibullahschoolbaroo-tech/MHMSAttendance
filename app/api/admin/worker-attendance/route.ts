@@ -85,7 +85,9 @@ export async function GET(req: Request) {
     if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
 
     const hasCheckedIn = Boolean(data.checkInTime || data.status === "present");
-    if (hasCheckedIn) {
+    const isExplicitAbsent = data.status === "absent" || data.missedSignOut === true;
+
+    if (hasCheckedIn && !isExplicitAbsent) {
       datesSet.add(dateStr);
       const isLate =
         data.isLate === true ||
@@ -143,15 +145,16 @@ export async function GET(req: Request) {
       details[dateStr] = {
         isLate,
         lateMinutes: typeof data.lateMinutes === "number" ? data.lateMinutes : undefined,
-        status: String(data.status ?? (isLate ? "late" : "present")),
+        status: data.status === "checked_out" ? (isLate ? "late" : "present") : String(data.status ?? (isLate ? "late" : "present")),
       };
     }
   }
 
-  // Process approved leaves
+  // Process approved leaves (Medical or Casual only - never late sign-out)
   const leaveDatesSet = new Set<string>();
   for (const d of leavesSnap.docs) {
     const data = d.data();
+    if (data.type === "late_sign_out" || data.isLateSignOut) continue;
     const startStr = String(data.startDate ?? "");
     const endStr = String(data.endDate ?? startStr);
     const curr = new Date(startStr + "T00:00:00Z");

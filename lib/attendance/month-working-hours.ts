@@ -104,8 +104,8 @@ function buildDayEntryRows(
   const dt = DateTime.fromISO(day, { zone });
   const isSunday = dt.isValid && dt.weekday === 7;
 
-  // 1. Approved Leave
-  if (data.onLeave && data.leave) {
+  // 1. Approved Leave (Medical or Casual only - late sign-out is attendance)
+  if (data.onLeave && data.leave && data.leave.type !== "late_sign_out") {
     const leaveTitle = data.leave.type === "medical" ? "Medical Leave" : "Casual Leave";
     return [
       {
@@ -244,13 +244,25 @@ export async function buildWorkerMonthWorkingHours(
     totalMs: 0,
   };
 
-  const dayDetails = await Promise.all(dayKeys.map((dayKey) => buildWorkerDayDetail(db, workerId, dayKey)));
+  const [leavesSnap, editsSnap] = await Promise.all([
+    db
+      .collection("leaveRequests")
+      .where("teacherId", "==", workerId)
+      .where("status", "==", "approved")
+      .get()
+      .catch(() => ({ docs: [] })),
+    db.collection("attendance_edits")
+      .where("workerId", "==", workerId)
+      .where("month", "==", monthYyyyMm.trim())
+      .get()
+      .catch(() => ({ docs: [] })),
+  ]);
 
-  const editsSnap = await db.collection("attendance_edits")
-    .where("workerId", "==", workerId)
-    .where("month", "==", monthYyyyMm.trim())
-    .get();
-  
+  const preloadedContext = { userSnap: userDoc, leavesSnap };
+  const dayDetails = await Promise.all(
+    dayKeys.map((dayKey) => buildWorkerDayDetail(db, workerId, dayKey, preloadedContext))
+  );
+
   const editsMap = new Map<string, any>();
   for (const doc of editsSnap.docs) {
     editsMap.set(doc.get("rowId"), doc.data());

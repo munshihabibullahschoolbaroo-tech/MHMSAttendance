@@ -72,6 +72,17 @@ export async function PATCH(
       reviewedAt: FieldValue.delete(),
       updatedAt: now,
     });
+    if (existing.workerId && existing.date) {
+      const sessRef = db.collection("teacherSessions").doc(`${existing.workerId}_${existing.date}`);
+      batch.set(
+        sessRef,
+        {
+          "lateSignOutRequest.status": "pending",
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    }
     if (existing.status === "approved" && existing.workerId && existing.date) {
       batch.delete(db.collection("attendance").doc(`${existing.workerId}_${existing.date}`));
     }
@@ -81,7 +92,8 @@ export async function PATCH(
   }
 
   if (parsed.data.status === "rejected") {
-    await ref.update({
+    const batch = db.batch();
+    batch.update(ref, {
       status: "rejected",
       reviewNote: parsed.data.note?.trim() || null,
       reviewedByUid: uid,
@@ -89,18 +101,49 @@ export async function PATCH(
       reviewedAt: now,
       updatedAt: now,
     });
+    if (existing.workerId && existing.date) {
+      const sessRef = db.collection("teacherSessions").doc(`${existing.workerId}_${existing.date}`);
+      batch.set(
+        sessRef,
+        {
+          status: "absent",
+          missedSignOut: true,
+          lateSignOutRequest: {
+            status: "rejected",
+            reviewedAt: now,
+            reviewedByEmail: email ?? null,
+            reviewNote: parsed.data.note?.trim() || null,
+          },
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+      const attRef = db.collection("attendance").doc(`${existing.workerId}_${existing.date}`);
+      batch.set(
+        attRef,
+        {
+          status: "absent",
+          missedSignOut: true,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    }
+    await batch.commit();
+
     if (existing.workerId) {
       try {
         await createNotification(db, {
           userId: existing.workerId,
-          title: "Manual Punch Rejected",
+          title: "Attendance Request Rejected",
           body: parsed.data.note?.trim()
-            ? `Your missing punch request for ${existing.date ?? ""} was rejected. Note: ${parsed.data.note.slice(0, 200)}`
-            : `Your missing punch request for ${existing.date ?? ""} was rejected.`,
+            ? `Your attendance/late punch request for ${existing.date ?? ""} was rejected. Note: ${parsed.data.note.slice(0, 200)}`
+            : `Your attendance/late punch request for ${existing.date ?? ""} was rejected. Attendance marked as absent.`,
           kind: "manual_punch_rejected",
-          link: "/dashboard/employee/requests/manual",
+          link: "/dashboard/employee/attendance",
         });
       } catch { /* non-critical */ }
+      invalidateTodayCache(existing.workerId);
     }
     return NextResponse.json({ ok: true });
   }
@@ -161,6 +204,18 @@ export async function PATCH(
     updatedAt: now,
   };
 
+  // 3. Update teacherSessions canonical document
+  const sessRef = db.collection("teacherSessions").doc(`${workerId}_${date}`);
+  const sessSnap = await sessRef.get();
+  let isLateArrival = false;
+  if (sessSnap.exists) {
+    const sData = sessSnap.data() ?? {};
+    isLateArrival =
+      sData.isLate === true ||
+      sData.lateArrival === true ||
+      (typeof sData.lateMinutes === "number" && sData.lateMinutes > 0);
+  }
+
   // Run as batch to ensure atomic
   const batch = db.batch();
   batch.update(ref, {
@@ -171,7 +226,43 @@ export async function PATCH(
     reviewedAt: now,
     updatedAt: now,
   });
-  batch.set(attRef, attendancePayload); // Overrides any partial timeline completely
+  batch.set(attRef, attendancePayload);
+
+  batch.set(
+    sessRef,
+    {
+      status: isLateArrival ? "late" : "present",
+      missedSignOut: false,
+      checkInTime: parseToTimestamp(first.inHm),
+      checkOutTime: parseToTimestamp(last.outHm),
+      lateSignOutRequest: {
+        status: "approved",
+        reviewedAt: now,
+        reviewedByEmail: email ?? null,
+        reviewNote: parsed.data.note?.trim() || null,
+      },
+      updatedAt: now,
+    },
+    { merge: true }
+  );
+
+  // Clean up any legacy accidental leaveRequests for this day so it never marks as leave
+  try {
+    const legacySnap = await db
+      .collection("leaveRequests")
+      .where("teacherId", "==", workerId)
+      .where("startDate", "==", date)
+      .get();
+    for (const legDoc of legacySnap.docs) {
+      const legData = legDoc.data();
+      if (legData.type === "late_sign_out" || legData.isLateSignOut) {
+        batch.delete(legDoc.ref);
+      }
+    }
+  } catch {
+    /* non-critical */
+  }
+
   await batch.commit();
 
   invalidateTodayCache(workerId);
@@ -180,10 +271,10 @@ export async function PATCH(
   try {
     await createNotification(db, {
       userId: workerId,
-      title: "Manual Punch Approved ✓",
-      body: `Your attendance times for ${date} have been corrected.`,
+      title: "Attendance Request Approved ✓",
+      body: `Your attendance record for ${date} has been approved and confirmed.`,
       kind: "manual_punch_approved",
-      link: "/dashboard/employee/requests/manual",
+      link: "/dashboard/employee/attendance",
     });
   } catch { /* non-critical */ }
 

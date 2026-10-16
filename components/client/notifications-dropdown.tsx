@@ -184,20 +184,18 @@ export function NotificationsDropdown() {
   return (
     <DropdownMenu.Root open={open} onOpenChange={setOpen}>
       <DropdownMenu.Trigger asChild>
-        <Button
+        <button
           type="button"
-          variant="ghost"
-          size="icon"
-          className="relative shrink-0 rounded-full border border-zinc-200/90 bg-white/90 text-foreground hover:bg-zinc-100 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+          className="relative size-9 sm:size-10 shrink-0 rounded-full flex items-center justify-center bg-white/10 dark:bg-white/[0.08] backdrop-blur-xl border border-white/20 dark:border-white/15 text-zinc-800 dark:text-zinc-100 shadow-sm transition-all duration-300 hover:bg-white/20 dark:hover:bg-white/15 hover:scale-105 active:scale-95 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
           aria-label="Notifications"
         >
-          <Bell className="size-5" />
+          <Bell className="size-4 sm:size-4.5" />
           {unread > 0 ? (
-            <span className="absolute -right-0.5 -top-0.5 flex min-w-[1.125rem] items-center justify-center rounded-full bg-cyan-500 px-1 text-[10px] font-bold text-white">
+            <span className="absolute -right-0.5 -top-0.5 flex min-w-[1.125rem] items-center justify-center rounded-full bg-cyan-500 px-1 text-[10px] font-bold text-white shadow-xs">
               {unread > 99 ? "99+" : unread}
             </span>
           ) : null}
-        </Button>
+        </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content

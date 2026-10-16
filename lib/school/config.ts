@@ -18,6 +18,10 @@ export type SchoolConfig = {
   sections: string[];
   classSections?: Record<string, string[]>;
   teacherLateTime?: string;
+  schoolOpenTime?: string;
+  schoolCloseTime?: string;
+  schoolSignOutDeadline?: string;
+  signOutGraceHours?: number;
 };
 
 export function getSectionsForClass(
@@ -117,12 +121,26 @@ export const DEFAULT_SCHOOL_CONFIG: SchoolConfig = {
     "Vocational Class A": ["Section A"],
     "Vocational Class B": ["Section A"],
   },
+  schoolOpenTime: "08:00 AM",
   teacherLateTime: "09:00 AM",
+  schoolCloseTime: "05:00 PM",
+  schoolSignOutDeadline: "07:00 PM",
+  signOutGraceHours: 2,
 };
 
+let cachedSchoolConfig: SchoolConfig | null = null;
+let cachedSchoolConfigExpiresAt = 0;
+
 export async function getSchoolConfig(db: Firestore): Promise<SchoolConfig> {
+  const now = Date.now();
+  if (cachedSchoolConfig && now < cachedSchoolConfigExpiresAt) {
+    return cachedSchoolConfig;
+  }
+
   const snap = await db.collection("schoolConfig").doc("main").get();
   if (!snap.exists) {
+    cachedSchoolConfig = DEFAULT_SCHOOL_CONFIG;
+    cachedSchoolConfigExpiresAt = now + 60_000;
     return DEFAULT_SCHOOL_CONFIG;
   }
   const data = snap.data() as Partial<SchoolConfig>;
@@ -131,7 +149,7 @@ export async function getSchoolConfig(db: Firestore): Promise<SchoolConfig> {
       ? (data.classSections as Record<string, string[]>)
       : undefined;
 
-  return {
+  const result: SchoolConfig = {
     ...DEFAULT_SCHOOL_CONFIG,
     ...data,
     latitude: typeof data.latitude === "number" ? data.latitude : DEFAULT_SCHOOL_CONFIG.latitude,
@@ -140,13 +158,35 @@ export async function getSchoolConfig(db: Firestore): Promise<SchoolConfig> {
     wings: Array.isArray(data.wings) && data.wings.length > 0 ? data.wings : DEFAULT_SCHOOL_CONFIG.wings,
     sections: Array.isArray(data.sections) && data.sections.length > 0 ? data.sections : DEFAULT_SCHOOL_CONFIG.sections,
     classSections: classSections ?? DEFAULT_SCHOOL_CONFIG.classSections ?? {},
+    schoolOpenTime:
+      typeof data.schoolOpenTime === "string" && data.schoolOpenTime.trim()
+        ? data.schoolOpenTime.trim()
+        : DEFAULT_SCHOOL_CONFIG.schoolOpenTime ?? "08:00 AM",
     teacherLateTime:
       typeof data.teacherLateTime === "string" && data.teacherLateTime.trim()
         ? data.teacherLateTime.trim()
         : DEFAULT_SCHOOL_CONFIG.teacherLateTime ?? "09:00 AM",
+    schoolCloseTime:
+      typeof data.schoolCloseTime === "string" && data.schoolCloseTime.trim()
+        ? data.schoolCloseTime.trim()
+        : DEFAULT_SCHOOL_CONFIG.schoolCloseTime ?? "05:00 PM",
+    schoolSignOutDeadline:
+      typeof data.schoolSignOutDeadline === "string" && data.schoolSignOutDeadline.trim()
+        ? data.schoolSignOutDeadline.trim()
+        : DEFAULT_SCHOOL_CONFIG.schoolSignOutDeadline ?? "07:00 PM",
+    signOutGraceHours:
+      typeof data.signOutGraceHours === "number" && !isNaN(data.signOutGraceHours) && data.signOutGraceHours >= 0
+        ? data.signOutGraceHours
+        : DEFAULT_SCHOOL_CONFIG.signOutGraceHours ?? 2,
   };
+
+  cachedSchoolConfig = result;
+  cachedSchoolConfigExpiresAt = now + 60_000;
+  return result;
 }
 
 export async function saveSchoolConfig(db: Firestore, config: Partial<SchoolConfig>): Promise<void> {
+  cachedSchoolConfig = null;
+  cachedSchoolConfigExpiresAt = 0;
   await db.collection("schoolConfig").doc("main").set(config, { merge: true });
 }

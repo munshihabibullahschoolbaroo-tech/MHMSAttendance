@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
-import { Bell, Check, CheckCheck, ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
+import { Bell, Check, CheckCheck, ArrowLeft, ExternalLink, Loader2, Trash2 } from "lucide-react";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -124,6 +124,44 @@ export function NotificationsPage() {
     }
   };
 
+  const deleteOne = async (id: string) => {
+    setItems((prev) => prev.filter((i) => i.id !== id));
+    try {
+      const h = await authHeaders();
+      await fetch("/api/notifications", {
+        method: "DELETE",
+        headers: { ...h, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [id] }),
+      });
+      toast.success("Notification deleted");
+      void load({ fresh: true });
+    } catch {
+      toast.error("Failed to delete notification");
+    }
+  };
+
+  const [deleting, setDeleting] = React.useState(false);
+  const clearAll = async () => {
+    if (items.length === 0) return;
+    setDeleting(true);
+    setItems([]);
+    try {
+      const h = await authHeaders();
+      const res = await fetch("/api/notifications", {
+        method: "DELETE",
+        headers: { ...h, "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      });
+      if (!res.ok) throw new Error("Failed to clear notifications");
+      toast.success("All notifications cleared");
+      await load({ fresh: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to clear notifications");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const unread = items.filter((i) => !i.read).length;
 
   return (
@@ -144,25 +182,43 @@ export function NotificationsPage() {
             </span>
           )}
         </div>
-        {unread > 0 ? (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={marking}
-            onClick={() => void markAll()}
-            className="gap-1.5 cursor-pointer"
-          >
-            {marking ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <CheckCheck className="size-4" />
-            )}
-            <span>Mark all read</span>
-          </Button>
-        ) : (
-          <span className="text-xs text-zinc-400 dark:text-zinc-500 font-medium">All read</span>
-        )}
+        <div className="flex items-center gap-2">
+          {unread > 0 && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={marking}
+              onClick={() => void markAll()}
+              className="gap-1.5 cursor-pointer"
+            >
+              {marking ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <CheckCheck className="size-4" />
+              )}
+              <span>Mark read</span>
+            </Button>
+          )}
+          {items.length > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={deleting}
+              onClick={() => void clearAll()}
+              className="gap-1 text-xs text-zinc-500 hover:text-red-500 hover:bg-red-500/10 dark:text-zinc-400 cursor-pointer"
+              title="Clear all notifications"
+            >
+              {deleting ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="size-3.5" />
+              )}
+              <span>Clear all</span>
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* List */}
@@ -229,6 +285,16 @@ export function NotificationsPage() {
                         <span>Mark read</span>
                       </Button>
                     )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 px-2 text-xs text-zinc-400 hover:text-red-500 hover:bg-red-500/10 dark:hover:text-red-400 cursor-pointer ml-auto"
+                      onClick={() => void deleteOne(row.id)}
+                      title="Delete notification"
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
                   </div>
                 </div>
               </li>

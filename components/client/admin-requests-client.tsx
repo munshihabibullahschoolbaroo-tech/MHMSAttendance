@@ -20,7 +20,7 @@ function normalizeTab(raw: string | null): Tab {
 
 const TAB_LABEL: Record<Tab, string> = {
   login: "Staff Approvals",
-  manual_punch: "Missed Attendance",
+  manual_punch: "Missed & Late Sign-Out",
   class_switch: "Class Switch Requests",
   class_assignment: "Class Teacher Assignments",
 };
@@ -44,7 +44,7 @@ export function AdminRequestsClient() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Requests & Approvals</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Review staff onboarding access, missed attendance, and teacher class switch requests.
+            Review staff onboarding access, missed attendance & late sign-out approvals, and teacher class switch requests.
           </p>
         </div>
         <Button asChild variant="outline" className="shrink-0 gap-2">

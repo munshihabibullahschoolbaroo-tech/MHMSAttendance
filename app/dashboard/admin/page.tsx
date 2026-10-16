@@ -5,7 +5,6 @@ import {
 } from "@/components/client/admin-dashboard-stats";
 
 import { AdminSearchHub } from "@/components/client/admin-search-hub";
-import { AdminCalendarModeToggle } from "@/components/client/admin-calendar-mode-toggle";
 
 export default function AdminOverviewPage() {
   return (
@@ -18,7 +17,6 @@ export default function AdminOverviewPage() {
               Today’s teacher attendance snapshot and school campus presence.
             </p>
           </div>
-          <AdminCalendarModeToggle />
         </div>
 
         <div className="mb-8">

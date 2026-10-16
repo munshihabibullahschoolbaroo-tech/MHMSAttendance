@@ -130,5 +130,72 @@ export async function runAutoCheckout(): Promise<{ processed: number; errors: st
     }
   }
 
+  // ─────────────────────────────────────────────────────────────
+  // 2. Process MHMS School teacherSessions (Canonical School Attendance)
+  // If a teacher punched in but never signed out, once midnight (12:00 AM)
+  // of the next day passes, their session is marked as absent / missed sign-out.
+  // ─────────────────────────────────────────────────────────────
+  try {
+    const todayKolkata = calendarDateKeyInTimeZone(now, "Asia/Kolkata");
+    const teacherSessionsSnap = await db
+      .collection("teacherSessions")
+      .where("date", "in", dayKeys)
+      .get();
+
+    for (const doc of teacherSessionsSnap.docs) {
+      const tsData = doc.data() as {
+        date?: string;
+        checkInTime?: unknown;
+        checkOutTime?: unknown;
+        status?: string;
+        missedSignOut?: boolean;
+        lateSignOutRequest?: { status?: string };
+      };
+
+      const docDateKey = tsData.date || doc.id.split("_")[1];
+      if (!docDateKey || !DAY_RE.test(docDateKey)) continue;
+
+      // Only evaluate sessions from days BEFORE today (i.e. past midnight)
+      if (docDateKey >= todayKolkata) continue;
+
+      // If checked in, not checked out, and no approved late sign-out
+      const hasCheckedIn = Boolean(tsData.checkInTime);
+      const hasCheckedOut = Boolean(tsData.checkOutTime);
+      const isAlreadyAbsent = tsData.status === "absent" || tsData.missedSignOut === true;
+      const isLateSignOutApproved = tsData.lateSignOutRequest?.status === "approved";
+
+      if (hasCheckedIn && !hasCheckedOut && !isAlreadyAbsent && !isLateSignOutApproved) {
+        await doc.ref.set(
+          {
+            status: "absent",
+            missedSignOut: true,
+            autoProcessedNote: "Teacher did not sign out before next day 12:00 AM midnight. Attendance marked absent.",
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        // Also update legacy attendance collection to absent
+        try {
+          await db.collection("attendance").doc(doc.id).set(
+            {
+              status: "absent",
+              missedSignOut: true,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        } catch {
+          /* non-critical */
+        }
+
+        processed++;
+      }
+    }
+  } catch (err) {
+    errors.push(`teacherSessions: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   return { processed, errors };
 }
+

@@ -339,6 +339,7 @@ export function AdminLeaveQueue() {
             const isMedical = leave.type === "medical";
             const isEmergency = leave.type === "emergency" || leave.isEmergencyDeparture === true;
             const isOnDuty = leave.type === "on_duty";
+            const isLateSignOut = leave.type === "late_sign_out" || (leave as any).isLateSignOut === true;
             const isSelected = selectedIds.includes(leave.id);
 
             return (
@@ -346,7 +347,14 @@ export function AdminLeaveQueue() {
                 key={leave.id}
                 className={cn(
                   "border-zinc-200 shadow-sm transition-all dark:border-white/10",
-                  isPending && (isEmergency ? "border-l-4 border-l-red-500" : isOnDuty ? "border-l-4 border-l-purple-500" : "border-l-4 border-l-amber-500"),
+                  isPending &&
+                    (isLateSignOut
+                      ? "border-l-4 border-l-rose-500"
+                      : isEmergency
+                      ? "border-l-4 border-l-red-500"
+                      : isOnDuty
+                      ? "border-l-4 border-l-purple-500"
+                      : "border-l-4 border-l-amber-500"),
                   isSelected && "ring-2 ring-blue-500/70 border-blue-400 bg-blue-50/10"
                 )}
               >
@@ -381,7 +389,9 @@ export function AdminLeaveQueue() {
                           <span
                             className={cn(
                               "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider flex items-center gap-1",
-                              isEmergency
+                              isLateSignOut
+                                ? "bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-500/30"
+                                : isEmergency
                                 ? "bg-red-500/15 text-red-700 dark:text-red-400 border border-red-500/30"
                                 : isOnDuty
                                 ? "bg-purple-500/15 text-purple-700 dark:text-purple-400 border border-purple-500/30"
@@ -390,7 +400,7 @@ export function AdminLeaveQueue() {
                                 : "bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20"
                             )}
                           >
-                            {isEmergency ? "🚨 Emergency Departure" : isOnDuty ? "🏛️ On-Duty (OD)" : `${leave.type} Leave`}
+                            {isLateSignOut ? "🌙 Late Sign-Out" : isEmergency ? "🚨 Emergency Departure" : isOnDuty ? "🏛️ On-Duty (OD)" : `${leave.type} Leave`}
                           </span>
                           <span
                             className={cn(

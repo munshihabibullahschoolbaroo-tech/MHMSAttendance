@@ -54,7 +54,7 @@ export async function POST(req: Request) {
       pendingClassAssignment: FieldValue.delete(),
     });
 
-    // Mark any existing pending requests as cancelled
+    // Mark any existing pending assignment and switch requests as cancelled
     try {
       const pendingSnap = await db
         .collection("classAssignmentRequests")
@@ -63,6 +63,17 @@ export async function POST(req: Request) {
         .get();
       for (const d of pendingSnap.docs) {
         await d.ref.update({ status: "cancelled", cancelledAt: FieldValue.serverTimestamp() });
+      }
+
+      const switchSnap = await db
+        .collection("classSwitchRequests")
+        .where("teacherId", "==", auth.decoded.uid)
+        .get();
+      for (const d of switchSnap.docs) {
+        const s = d.get("status");
+        if (s === "pending" || s === "approved") {
+          await d.ref.update({ status: "cancelled", cancelledAt: FieldValue.serverTimestamp() });
+        }
       }
     } catch {
       /* ignore */
@@ -126,6 +137,56 @@ export async function POST(req: Request) {
     }
 
     const effectiveWing = wingId || userData.schoolWingId || "lower";
+    const normClass = classId.trim().toLowerCase();
+    const normSec = sectionId.replace(/^section\s+/i, "").trim().toLowerCase();
+
+    // Check if class & section is already assigned or requested by another teacher
+    const allUsersSnap = await db.collection("users").get();
+    for (const doc of allUsersSnap.docs) {
+      if (doc.id === auth.decoded.uid) continue;
+      if (doc.get("isClassTeacher") === true) {
+        const c = String(doc.get("schoolClassId") || "").trim().toLowerCase();
+        const s = String(doc.get("schoolSectionId") || "").replace(/^section\s+/i, "").trim().toLowerCase();
+        if (c === normClass && s === normSec) {
+          return jsonError(
+            `${classId} (${sectionId}) is already assigned to ${doc.get("name") || "another teacher"}. Please select another class.`,
+            400
+          );
+        }
+      }
+      const pending = doc.get("pendingClassAssignment");
+      if (pending && pending.status === "pending") {
+        const c = String(pending.classId || "").trim().toLowerCase();
+        const s = String(pending.sectionId || "").replace(/^section\s+/i, "").trim().toLowerCase();
+        if (c === normClass && s === normSec) {
+          return jsonError(
+            `${classId} (${sectionId}) has already been requested by ${doc.get("name") || "another teacher"} and is awaiting admin approval. Please select an available class.`,
+            400
+          );
+        }
+      }
+    }
+
+    try {
+      const pendingReqSnap = await db
+        .collection("classAssignmentRequests")
+        .where("status", "==", "pending")
+        .get();
+      for (const d of pendingReqSnap.docs) {
+        const data = d.data();
+        if (data.teacherId === auth.decoded.uid) continue;
+        const c = String(data.requestedClass || "").trim().toLowerCase();
+        const s = String(data.requestedSection || "").replace(/^section\s+/i, "").trim().toLowerCase();
+        if (c === normClass && s === normSec) {
+          return jsonError(
+            `${classId} (${sectionId}) has already been requested by ${data.teacherName || "another teacher"} and is awaiting admin approval.`,
+            400
+          );
+        }
+      }
+    } catch {
+      /* ignore */
+    }
 
     // Create a formal Assignment Request document in classAssignmentRequests
     const reqRef = db.collection("classAssignmentRequests").doc();

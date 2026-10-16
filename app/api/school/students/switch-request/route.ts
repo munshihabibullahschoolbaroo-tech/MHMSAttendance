@@ -67,7 +67,7 @@ export async function GET(req: Request) {
   return NextResponse.json({ ok: true, requests });
 }
 
-/** POST /api/school/students/switch-request - Teacher submits a switch request */
+/** POST /api/school/students/switch-request - Teacher submits a switch request or applies an approved switch */
 export async function POST(req: Request) {
   const auth = await requireBearerUser(req);
   if (!auth.ok) return auth.response;
@@ -77,6 +77,62 @@ export async function POST(req: Request) {
     json = await req.json();
   } catch {
     return jsonError("Invalid JSON", 400);
+  }
+
+  // Handle applying an already approved switch to the teacher's user profile
+  if ((json as any)?.action === "apply_approved_switch") {
+    const requestId = String((json as any)?.requestId || "").trim();
+    if (!requestId) return jsonError("requestId is required", 400);
+
+    const db = adminDb();
+    const reqRef = db.collection("classSwitchRequests").doc(requestId);
+    const reqSnap = await reqRef.get();
+    if (!reqSnap.exists) return jsonError("Switch request not found", 404);
+
+    const rData = reqSnap.data()!;
+    if (rData.teacherId !== auth.decoded.uid) {
+      return jsonError("Unauthorized to apply this switch request", 403);
+    }
+    if (rData.status !== "approved") {
+      return jsonError("Switch request has not been approved by administration", 400);
+    }
+
+    const teacherRef = db.collection("users").doc(auth.decoded.uid);
+    const teacherSnap = await teacherRef.get();
+    const teacherData = teacherSnap.data() ?? {};
+
+    const prevClass = teacherData.schoolClassId || rData.assignedClass || null;
+    const prevSec = teacherData.schoolSectionId || rData.assignedSection || null;
+    const prevWing = teacherData.schoolWingId || rData.wingId || null;
+
+    // Apply the switch to the user doc and unassign the previous class
+    await teacherRef.update({
+      isClassTeacher: true,
+      schoolClassId: rData.requestedClass,
+      schoolSectionId: rData.requestedSection,
+      schoolWingId: rData.wingId || teacherData.schoolWingId || "lower",
+      previousClassAssignment: {
+        classId: prevClass,
+        sectionId: prevSec,
+        wingId: prevWing,
+        switchedAt: FieldValue.serverTimestamp(),
+        switchRequestId: requestId,
+      },
+    });
+
+    await reqRef.update({
+      appliedToTeacher: true,
+      appliedAt: FieldValue.serverTimestamp(),
+    });
+
+    return NextResponse.json({
+      ok: true,
+      message: `Successfully switched to ${rData.requestedClass} (${rData.requestedSection})! Previous class (${prevClass || "previous"}) has been unassigned.`,
+      newClass: rData.requestedClass,
+      newSection: rData.requestedSection,
+      previousClass: prevClass,
+      previousSection: prevSec,
+    });
   }
 
   const parsed = createRequestSchema.safeParse(json);
@@ -139,6 +195,27 @@ export async function POST(req: Request) {
     );
   }
 
+  // Check if requested class has a pending assignment request from another teacher
+  const existingPending = allUsersSnap.docs.find((d) => {
+    if (d.id === auth.decoded.uid) return false;
+    const pending = d.get("pendingClassAssignment");
+    if (!pending || pending.status !== "pending") return false;
+    const c = pending.classId;
+    const s = pending.sectionId;
+    if (typeof c !== "string") return false;
+    const rawExisting = typeof s === "string" ? s : "Section A";
+    const normReq = requestedSection.replace(/^section\s+/i, "").trim().toLowerCase();
+    const normExisting = rawExisting.replace(/^section\s+/i, "").trim().toLowerCase();
+    return c.trim().toLowerCase() === requestedClass.trim().toLowerCase() && normExisting === normReq;
+  });
+
+  if (existingPending) {
+    return jsonError(
+      `${requestedClass} (${requestedSection}) has already been requested by ${existingPending.get("name") || "another teacher"} and is awaiting admin approval.`,
+      400
+    );
+  }
+
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const targetDate = date || todayStr;
@@ -191,7 +268,7 @@ export async function POST(req: Request) {
       await createNotification(db, {
         userId: doc.id,
         title: "Class Switch Request",
-        body: `${userData.name || "Teacher"} requested temporary switch to ${requestedClass} (${requestedSection}): "${reason.trim()}"`,
+        body: `${userData.name || "Teacher"} requested to switch from ${assignedClass || "previous class"} to ${requestedClass} (${requestedSection}): "${reason.trim()}"`,
         kind: "system",
         link: "/dashboard/admin/requests?tab=class_switch",
       });
@@ -237,25 +314,62 @@ export async function PATCH(req: Request) {
   const reqData = snap.data()!;
   const newStatus = action === "approve" ? "approved" : "rejected";
 
-  await docRef.update({
-    status: newStatus,
-    reviewedBy: auth.decoded.uid,
-    reviewedByEmail: callerData.email || "",
-    reviewedAt: FieldValue.serverTimestamp(),
-    reviewNote: reviewNote || "",
-  });
+  let prevClass: string | null = null;
+  let prevSec: string | null = null;
+
+  if (action === "approve") {
+    const teacherRef = db.collection("users").doc(reqData.teacherId);
+    const teacherSnap = await teacherRef.get();
+    const teacherData = teacherSnap.data() ?? {};
+
+    prevClass = teacherData.schoolClassId || reqData.assignedClass || null;
+    prevSec = teacherData.schoolSectionId || reqData.assignedSection || null;
+    const prevWing = teacherData.schoolWingId || reqData.wingId || null;
+
+    // Appoint teacher to the new class and unassign their previous class!
+    await teacherRef.update({
+      isClassTeacher: true,
+      schoolClassId: reqData.requestedClass,
+      schoolSectionId: reqData.requestedSection,
+      schoolWingId: reqData.wingId || teacherData.schoolWingId || "lower",
+      previousClassAssignment: {
+        classId: prevClass,
+        sectionId: prevSec,
+        wingId: prevWing,
+        switchedAt: FieldValue.serverTimestamp(),
+        switchRequestId: requestId,
+      },
+    });
+
+    await docRef.update({
+      status: "approved",
+      appliedToTeacher: true,
+      reviewedBy: auth.decoded.uid,
+      reviewedByEmail: callerData.email || "",
+      reviewedAt: FieldValue.serverTimestamp(),
+      reviewNote: reviewNote || "",
+    });
+  } else {
+    await docRef.update({
+      status: "rejected",
+      reviewedBy: auth.decoded.uid,
+      reviewedByEmail: callerData.email || "",
+      reviewedAt: FieldValue.serverTimestamp(),
+      reviewNote: reviewNote || "",
+    });
+  }
 
   // Notify the Teacher
   try {
     await createNotification(db, {
       userId: reqData.teacherId,
-      title: action === "approve" ? "Class Switch Approved" : "Class Switch Rejected",
+      title: action === "approve" ? "Class Switch Approved!" : "Class Switch Rejected",
       body:
         action === "approve"
-          ? `Your switch request for ${reqData.requestedClass} (${reqData.requestedSection}) has been approved! You have 1-time access to record attendance.`
-          : `Your switch request for ${reqData.requestedClass} (${reqData.requestedSection}) was declined: ${reviewNote || "No reason specified"}.`,
+          ? `Your class switch has been approved! You are now the assigned Class Teacher for ${reqData.requestedClass} (${reqData.requestedSection}). Your previous class (${prevClass || "previous"} ${prevSec || ""}) has been unassigned.`
+          : `Your class switch request for ${reqData.requestedClass} (${reqData.requestedSection}) was declined: ${reviewNote || "No reason specified"}.`,
       kind: "system",
-      link: "/dashboard/employee/students",
+      link: "/dashboard/employee/student-attendance",
     });
   } catch (err) {
     console.error("Failed to notify teacher:", err);

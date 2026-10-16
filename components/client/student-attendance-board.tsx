@@ -644,11 +644,9 @@ export function StudentAttendanceBoard({
       setAlreadySaved(true);
       const attCacheKey = `${todayStr}_${classId}_${sectionId}`;
       attendanceRecordCache.set(attCacheKey, { map: statusMap, saved: true });
+      toast.success(`Attendance saved for ${classId} (${sectionId})!`);
       if (data.consumedSwitch) {
-        toast.success(`Attendance saved! Temporary switch completed. Reverting to your assigned class.`);
         onSwitchConsumed?.(data.assignedClass, data.assignedSection);
-      } else {
-        toast.success(`Attendance saved for ${classId} (${sectionId})!`);
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Error saving attendance");

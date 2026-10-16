@@ -31,7 +31,7 @@ type ClassSwitchRequest = {
 export function AdminClassSwitchRequestsPanel({ embedded = false }: { embedded?: boolean }) {
   const [items, setItems] = React.useState<ClassSwitchRequest[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [filter, setFilter] = React.useState<"all" | "pending" | "approved" | "consumed" | "rejected">("pending");
+  const [filter, setFilter] = React.useState<"all" | "pending" | "approved" | "rejected">("pending");
   const [actionBusyId, setActionBusyId] = React.useState<string | null>(null);
 
   const realTodayStr = React.useMemo(() => {
@@ -87,7 +87,7 @@ export function AdminClassSwitchRequestsPanel({ embedded = false }: { embedded?:
 
       toast.success(
         action === "approve"
-          ? "Class switch approved! Teacher has 1-time access to record attendance."
+          ? "Class switch approved! Teacher appointed to the new class and previous class unassigned."
           : "Class switch request rejected."
       );
 
@@ -121,26 +121,46 @@ export function AdminClassSwitchRequestsPanel({ embedded = false }: { embedded?:
   };
 
   return (
-    <Card className={cn("border-zinc-200/90 dark:border-white/10 dark:bg-zinc-950", embedded && "border-0 shadow-none p-0")}>
-      <CardHeader className={cn("px-4 sm:px-6 pt-4 pb-3", embedded && "px-0 pt-0")}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <Card className="rounded-2xl border border-zinc-200/80 bg-white shadow-xs dark:border-white/10 dark:bg-zinc-950">
+      <CardHeader className="px-4 sm:px-6 pt-5 pb-4 border-b border-zinc-100 dark:border-white/5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <CardTitle className="text-lg font-bold flex items-center gap-2">
               <Sparkles className="size-5 text-blue-500" />
               Teacher Class Switch Requests
               {pendingCount > 0 && (
-                <span className="rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-xs px-2 py-0.5 font-bold">
+                <span className="rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/25 text-xs px-2.5 py-0.5 font-bold">
                   {pendingCount} Pending
                 </span>
               )}
             </CardTitle>
-            <CardDescription className="text-xs">
-              Review and grant temporary 1-time attendance marking permissions for teachers covering other classes within their category.
+            <CardDescription className="text-xs mt-1">
+              Review teacher requests to switch and be appointed as Class Teacher for a different class.
             </CardDescription>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="w-40">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Status filter tabs */}
+            <div className="inline-flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-900 border border-zinc-200/80 dark:border-white/10 text-xs">
+              {(["pending", "approved", "rejected", "all"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFilter(f)}
+                  className={cn(
+                    "rounded-lg px-3 py-1 font-bold capitalize transition-all cursor-pointer",
+                    filter === f
+                      ? "bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400"
+                  )}
+                >
+                  {f}
+                  {f === "pending" && pendingCount > 0 && ` (${pendingCount})`}
+                </button>
+              ))}
+            </div>
+
+            <div className="w-36">
               <AppDatePicker
                 value={selectedDate}
                 onChange={(d) => setSelectedDate(d)}
@@ -148,47 +168,29 @@ export function AdminClassSwitchRequestsPanel({ embedded = false }: { embedded?:
                 className="py-1 text-xs"
               />
             </div>
+
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => void fetchRequests()}
-              className="h-8 gap-1.5 text-xs"
+              disabled={loading}
+              className="rounded-xl h-8 px-2.5 gap-1.5 text-xs cursor-pointer"
             >
               <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-              Refresh
+              <span>Refresh</span>
             </Button>
           </div>
         </div>
-
-        {/* Filter Pills */}
-        <div className="flex flex-wrap gap-1.5 pt-3">
-          {(["pending", "approved", "consumed", "rejected", "all"] as const).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFilter(f)}
-              className={cn(
-                "rounded-lg px-2.5 py-1 text-xs font-semibold capitalize transition-all",
-                filter === f
-                  ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-xs"
-                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
-              )}
-            >
-              {f}
-              {f === "pending" && pendingCount > 0 && ` (${pendingCount})`}
-            </button>
-          ))}
-        </div>
       </CardHeader>
 
-      <CardContent className={cn("px-4 sm:px-6 pb-6", embedded && "px-0 pb-0")}>
+      <CardContent className="px-4 sm:px-6 py-5">
         {loading ? (
-          <div className="py-12 text-center text-xs text-zinc-400 animate-pulse">
+          <div className="py-16 text-center text-xs text-zinc-400 animate-pulse">
             Loading class switch requests...
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-zinc-200 p-8 text-center dark:border-white/10">
+          <div className="rounded-2xl border border-dashed border-zinc-200 p-12 text-center dark:border-white/10">
             <AlertCircle className="size-8 text-zinc-400 mx-auto mb-2 opacity-50" />
             <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
               No {filter !== "all" ? filter : ""} class switch requests found
@@ -200,7 +202,7 @@ export function AdminClassSwitchRequestsPanel({ embedded = false }: { embedded?:
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[calc(100vh-340px)] min-h-[280px] overflow-y-auto pr-1 sm:pr-2">
             {filteredItems.map((req) => {
               const isBusy = actionBusyId === req.id;
               return (
@@ -225,12 +227,7 @@ export function AdminClassSwitchRequestsPanel({ embedded = false }: { embedded?:
                       )}
                       {req.status === "approved" && (
                         <span className="rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold px-2 py-0.5 border border-emerald-500/30">
-                          Approved (1-Time Access)
-                        </span>
-                      )}
-                      {req.status === "consumed" && (
-                        <span className="rounded-full bg-zinc-500/15 text-zinc-700 dark:text-zinc-300 text-[10px] font-bold px-2 py-0.5 border border-zinc-500/30">
-                          ✓ Completed &amp; Saved
+                          Approved (Class Appointed)
                         </span>
                       )}
                       {req.status === "rejected" && (
@@ -266,7 +263,7 @@ export function AdminClassSwitchRequestsPanel({ embedded = false }: { embedded?:
                         className="bg-emerald-600 text-white hover:bg-emerald-700 text-xs gap-1.5 h-8 font-bold shadow-xs cursor-pointer"
                       >
                         <Check className="size-3.5" />
-                        Approve (1-Time)
+                        Approve Switch
                       </Button>
                       <Button
                         type="button"
@@ -284,8 +281,8 @@ export function AdminClassSwitchRequestsPanel({ embedded = false }: { embedded?:
                   {req.status === "approved" && (
                     <div className="text-right shrink-0">
                       <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                        <Clock className="size-3.5" />
-                        Awaiting attendance submission
+                        <Check className="size-3.5" />
+                        Class Teacher Appointed
                       </span>
                     </div>
                   )}

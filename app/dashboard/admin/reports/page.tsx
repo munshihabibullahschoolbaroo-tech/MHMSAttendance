@@ -56,10 +56,15 @@ import {
   CheckSquare,
   Square,
   RefreshCw,
+  Bell,
+  ShieldCheck,
+  ShieldAlert,
+  Check,
 } from "lucide-react";
 import { DateField } from "@/components/ui/date-field";
 import { cn } from "@/lib/utils";
 import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
+import type { AdminNotificationItem } from "@/app/api/admin/notifications/route";
 
 type UserRow = {
   id: string;
@@ -242,6 +247,29 @@ export default function AdminReportsPage() {
     deleteCandidateCount: number;
     sample: { pathname: string; uploadedAtIso: string }[];
     truncated?: boolean;
+  } | null>(null);
+
+  // ── Storage Sub-Tab & Notifications Deleter State ─────────────────────────
+  const [storageSubTab, setStorageSubTab] = React.useState<"blob" | "notifications">("blob");
+  const [notifItems, setNotifItems] = React.useState<AdminNotificationItem[]>([]);
+  const [notifStats, setNotifStats] = React.useState<{
+    total: number;
+    withoutAdmin: number;
+    withAdmin: number;
+    adminOnly: number;
+  } | null>(null);
+  const [notifLoading, setNotifLoading] = React.useState(false);
+  const [notifDeleting, setNotifDeleting] = React.useState(false);
+  const [notifScope, setNotifScope] = React.useState<"all_without_admin" | "all_with_admin" | "individual">("all_without_admin");
+  const [notifTargetUserId, setNotifTargetUserId] = React.useState<string>("");
+  const [notifSearchQuery, setNotifSearchQuery] = React.useState<string>("");
+  const [notifSelectedIds, setNotifSelectedIds] = React.useState<string[]>([]);
+  const [notifConfirmModal, setNotifConfirmModal] = React.useState<{
+    title: string;
+    subtitle?: string;
+    description: string;
+    confirmText: string;
+    onConfirm: () => Promise<void>;
   } | null>(null);
 
   const [mounted, setMounted] = React.useState(false);
@@ -1051,10 +1079,192 @@ export default function AdminReportsPage() {
 
   // Load storage files when tab is opened
   React.useEffect(() => {
-    if (activeTab === "storage") {
+    if (activeTab === "storage" && storageSubTab === "blob") {
       void fetchStorageFiles(false);
     }
-  }, [activeTab, storageFilterMode, storageFromMonth, storageToMonth, fetchStorageFiles]);
+  }, [activeTab, storageSubTab, storageFilterMode, storageFromMonth, storageToMonth, fetchStorageFiles]);
+
+  // ── Notifications Deleter Actions ──────────────────────────────────────────
+  const fetchNotifications = React.useCallback(async (showToast = false) => {
+    setNotifLoading(true);
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) return;
+      const token = await u.getIdToken();
+      const params = new URLSearchParams();
+      params.set("scope", notifScope);
+      if (notifScope === "individual" && notifTargetUserId) {
+        params.set("userId", notifTargetUserId);
+      }
+      if (notifSearchQuery.trim()) {
+        params.set("q", notifSearchQuery.trim());
+      }
+      const res = await fetch(`/api/admin/notifications?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load notifications");
+      setNotifItems(data.items || []);
+      setNotifStats(data.stats || null);
+      if (showToast) {
+        toast.success("Notifications refreshed");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load notifications");
+    } finally {
+      setNotifLoading(false);
+    }
+  }, [notifScope, notifTargetUserId, notifSearchQuery]);
+
+  React.useEffect(() => {
+    if (activeTab === "storage" && storageSubTab === "notifications") {
+      void fetchNotifications(false);
+    }
+  }, [activeTab, storageSubTab, notifScope, notifTargetUserId, fetchNotifications]);
+
+  const deleteSelectedNotifs = React.useCallback(() => {
+    if (notifSelectedIds.length === 0) return;
+    setNotifConfirmModal({
+      title: "Delete Selected Notifications",
+      subtitle: `${notifSelectedIds.length} notification(s) selected`,
+      description: `Permanently delete ${notifSelectedIds.length} selected notification(s)? This will free up database storage and cannot be undone.`,
+      confirmText: "Delete Selected",
+      onConfirm: async () => {
+        setNotifDeleting(true);
+        try {
+          const auth = getFirebaseAuth();
+          const u = auth.currentUser;
+          if (!u) throw new Error("Not signed in");
+          const token = await u.getIdToken();
+          const res = await fetch("/api/admin/notifications", {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              scope: "selected_ids",
+              ids: notifSelectedIds,
+            }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(json.error ?? "Failed to delete notifications");
+          toast.success(`Successfully deleted ${json.deletedCount ?? notifSelectedIds.length} notification(s)`);
+          setNotifSelectedIds([]);
+          void fetchNotifications(false);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Failed to delete notifications");
+        } finally {
+          setNotifDeleting(false);
+          setNotifConfirmModal(null);
+        }
+      },
+    });
+  }, [notifSelectedIds, fetchNotifications]);
+
+  const executeBulkDeleteNotifScope = React.useCallback(() => {
+    let title = "Prune Notifications";
+    let subtitle = "";
+    let description = "";
+
+    if (notifScope === "all_without_admin") {
+      title = "Delete Staff Notifications (Without Admin)";
+      subtitle = "All regular staff & teacher alerts";
+      description = `Permanently delete all notifications sent to non-admin staff members (${notifStats?.withoutAdmin ?? notifItems.length} alerts)? All admin and management notifications will be safely preserved.`;
+    } else if (notifScope === "all_with_admin") {
+      title = "Delete All Notifications (With Admin)";
+      subtitle = "Complete database notification purge";
+      description = `Permanently delete ALL ${notifStats?.total ?? notifItems.length} notifications across the entire institution, INCLUDING admin alerts? This will completely wipe all notifications in the system.`;
+    } else {
+      const targetUser = users.find((u) => u.id === notifTargetUserId);
+      const targetName = targetUser?.name || "the selected staff member";
+      title = `Delete Notifications for ${targetName}`;
+      subtitle = `Target: ${targetUser?.email || notifTargetUserId}`;
+      description = `Permanently delete all notifications for ${targetName} (${notifItems.length} alerts)?`;
+    }
+
+    setNotifConfirmModal({
+      title,
+      subtitle,
+      description,
+      confirmText: "Prune Notifications",
+      onConfirm: async () => {
+        setNotifDeleting(true);
+        try {
+          const auth = getFirebaseAuth();
+          const u = auth.currentUser;
+          if (!u) throw new Error("Not signed in");
+          const token = await u.getIdToken();
+          const res = await fetch("/api/admin/notifications", {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              scope: notifScope,
+              userId: notifScope === "individual" ? notifTargetUserId : undefined,
+            }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(json.error ?? "Failed to delete notifications");
+          toast.success(`Successfully deleted ${json.deletedCount ?? 0} notification(s)`);
+          setNotifSelectedIds([]);
+          void fetchNotifications(false);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Failed to delete notifications");
+        } finally {
+          setNotifDeleting(false);
+          setNotifConfirmModal(null);
+        }
+      },
+    });
+  }, [notifScope, notifTargetUserId, notifStats, notifItems.length, users, fetchNotifications]);
+
+  const deleteSingleNotif = React.useCallback(
+    (item: AdminNotificationItem) => {
+      setNotifConfirmModal({
+        title: "Delete Notification",
+        subtitle: item.title,
+        description: `Permanently delete notification "${item.title}" for ${item.userName}?`,
+        confirmText: "Delete",
+        onConfirm: async () => {
+          setNotifDeleting(true);
+          try {
+            const auth = getFirebaseAuth();
+            const u = auth.currentUser;
+            if (!u) throw new Error("Not signed in");
+            const token = await u.getIdToken();
+            const res = await fetch("/api/admin/notifications", {
+              method: "DELETE",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                scope: "selected_ids",
+                ids: [item.id],
+              }),
+            });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(json.error ?? "Failed to delete notification");
+            toast.success("Notification deleted");
+            setNotifItems((prev) => prev.filter((i) => i.id !== item.id));
+            setNotifSelectedIds((prev) => prev.filter((id) => id !== item.id));
+            void fetchNotifications(false);
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Failed to delete notification");
+          } finally {
+            setNotifDeleting(false);
+            setNotifConfirmModal(null);
+          }
+        },
+      });
+    },
+    [fetchNotifications]
+  );
 
   return (
     <div className="relative min-h-[calc(100vh-4rem)] p-4 sm:p-6 md:p-8">
@@ -1918,7 +2128,43 @@ export default function AdminReportsPage() {
 
         {activeTab === "storage" && (
           <div className="space-y-6 animate-in fade-in duration-300">
-            {/* Storage Header & Info */}
+            {/* Storage Sub-Navigation */}
+            <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-zinc-100/90 dark:bg-zinc-800/90 shadow-inner w-fit">
+              <button
+                type="button"
+                onClick={() => setStorageSubTab("blob")}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer",
+                  storageSubTab === "blob"
+                    ? "bg-white text-zinc-900 shadow-md dark:bg-zinc-700 dark:text-white"
+                    : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                )}
+              >
+                <HardDrive className="size-4 text-cyan-600 dark:text-cyan-400" />
+                Leave Medical Documents Storage
+              </button>
+              <button
+                type="button"
+                onClick={() => setStorageSubTab("notifications")}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer",
+                  storageSubTab === "notifications"
+                    ? "bg-white text-zinc-900 shadow-md dark:bg-zinc-700 dark:text-white"
+                    : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                )}
+              >
+                <Bell className="size-4 text-amber-500 dark:text-amber-400" />
+                Notifications Storage & Cleanup
+                {notifStats && notifStats.total > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                    {notifStats.total}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Sub-Tab 1: Vercel Blob Medical Documents Storage */}
+            {storageSubTab === "blob" && (
             <Card className="border-zinc-200 bg-white/80 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-zinc-900/80 overflow-hidden">
               <CardHeader className="bg-zinc-50/50 dark:bg-white/5 border-b border-zinc-100 dark:border-white/10 pb-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -2293,6 +2539,380 @@ export default function AdminReportsPage() {
                 )}
               </CardContent>
             </Card>
+            )}
+
+            {/* Sub-Tab 2: Notifications Storage & Purge Tool */}
+            {storageSubTab === "notifications" && (
+              <Card className="border-zinc-200 bg-white/80 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-zinc-900/80 overflow-hidden">
+                <CardHeader className="bg-zinc-50/50 dark:bg-white/5 border-b border-zinc-100 dark:border-white/10 pb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-base font-bold text-zinc-900 dark:text-zinc-50 flex items-center gap-2">
+                        <Bell className="size-5 text-amber-500 dark:text-amber-400" />
+                        System & Staff Notifications Storage & Purge
+                      </CardTitle>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 max-w-2xl">
+                        Clean up in-app notification records stored in Firestore. Choose to delete all staff notifications (without admins), wipe all notifications across the school, or target an individual staff member.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void fetchNotifications(true)}
+                        disabled={notifLoading || notifDeleting}
+                        className="gap-1.5 rounded-xl text-xs font-semibold cursor-pointer"
+                      >
+                        <RefreshCw className={cn("size-3.5", notifLoading && "animate-spin")} />
+                        Refresh
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => void executeBulkDeleteNotifScope()}
+                        disabled={notifLoading || notifDeleting || notifItems.length === 0}
+                        className="gap-1.5 rounded-xl text-xs font-bold cursor-pointer"
+                      >
+                        {notifDeleting ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                        {notifScope === "all_without_admin"
+                          ? "Prune All (Without Admin)"
+                          : notifScope === "all_with_admin"
+                          ? "Prune All (With Admin)"
+                          : "Prune Staff Alerts"}
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="space-y-6 pt-6">
+                  {/* Metrics Bar */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                        Total Notifications
+                      </p>
+                      <p className="text-2xl font-black text-zinc-900 dark:text-zinc-100 mt-1">
+                        {notifStats?.total ?? notifItems.length}
+                        <span className="text-xs font-medium text-zinc-500 ml-1.5">alerts</span>
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                        Staff Alerts (Without Admin)
+                      </p>
+                      <p className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1">
+                        {notifStats?.withoutAdmin ?? 0}
+                        <span className="text-xs font-medium text-zinc-500 ml-1.5">alerts</span>
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/70 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                        Admin Alerts (Management)
+                      </p>
+                      <p className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-1">
+                        {notifStats?.adminOnly ?? 0}
+                        <span className="text-xs font-medium text-zinc-500 ml-1.5">alerts</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Target Scope Dropdown Controls (All without admin / All with admin / Individual) */}
+                  <div className="p-4 rounded-2xl bg-zinc-50/80 dark:bg-white/[0.02] border border-zinc-200/80 dark:border-white/5 space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      <div>
+                        <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                          Deletion Target Scope
+                        </label>
+                        <select
+                          value={notifScope}
+                          onChange={(e) => {
+                            const val = e.target.value as "all_without_admin" | "all_with_admin" | "individual";
+                            setNotifScope(val);
+                            setNotifSelectedIds([]);
+                            if (val === "individual" && !notifTargetUserId && users.length > 0) {
+                              setNotifTargetUserId(users[0].id);
+                            }
+                          }}
+                          className="h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-900 shadow-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100 cursor-pointer"
+                        >
+                          <option value="all_without_admin">
+                            All Without Admin (Staff Only - Exclude Admin)
+                          </option>
+                          <option value="all_with_admin">
+                            All Notifications (With Admin - Whole School)
+                          </option>
+                          <option value="individual">
+                            Individual Staff Member (Select Specific Staff)
+                          </option>
+                        </select>
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
+                          {notifScope === "all_without_admin"
+                            ? "Deletes notifications for regular staff & teachers. Keeps admin alerts safe."
+                            : notifScope === "all_with_admin"
+                            ? "Complete purge of all notifications in the database including admin alerts."
+                            : "Target and delete notifications for one specific teacher or staff member."}
+                        </p>
+                      </div>
+
+                      {/* Individual Staff Member Picker */}
+                      {notifScope === "individual" && (
+                        <div>
+                          <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                            Select Staff Member
+                          </label>
+                          <SearchableSelect
+                            value={notifTargetUserId}
+                            onValueChange={(val) => {
+                              setNotifTargetUserId(val);
+                              setNotifSelectedIds([]);
+                            }}
+                            includeEmpty={false}
+                            options={users.map((u) => ({
+                              value: u.id,
+                              label: `${u.name || u.email}${u.designation ? ` (${u.designation})` : ""}${
+                                u.role === "admin" ? " [Admin]" : ""
+                              }`,
+                            }))}
+                            searchPlaceholder="Search teacher or staff..."
+                            triggerClassName="h-10 w-full rounded-xl border-zinc-200 bg-white px-3 text-xs font-semibold shadow-sm dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100"
+                          />
+                        </div>
+                      )}
+
+                      {/* Keyword Filter */}
+                      <div className={cn(notifScope !== "individual" && "md:col-span-1 lg:col-span-2")}>
+                        <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
+                          Search Notifications
+                        </label>
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
+                          <input
+                            type="text"
+                            value={notifSearchQuery}
+                            onChange={(e) => setNotifSearchQuery(e.target.value)}
+                            placeholder="Filter by title, content, or staff name..."
+                            className="h-10 w-full rounded-xl border border-zinc-200 bg-white pl-9 pr-3 text-xs placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Bulk Selection Actions Bar */}
+                  {notifSelectedIds.length > 0 && (
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-amber-50/90 border border-amber-200/80 dark:bg-amber-950/30 dark:border-amber-800/40">
+                      <span className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                        {notifSelectedIds.length} notification(s) selected
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setNotifSelectedIds([])}
+                          className="text-xs h-8 text-zinc-600 dark:text-zinc-300 cursor-pointer"
+                        >
+                          Clear Selection
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => void deleteSelectedNotifs()}
+                          disabled={notifDeleting}
+                          className="text-xs h-8 font-bold gap-1.5 cursor-pointer"
+                        >
+                          <Trash2 className="size-3.5" />
+                          Delete Selected ({notifSelectedIds.length})
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Notifications Table */}
+                  {notifLoading ? (
+                    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 text-zinc-500">
+                      <Loader2 className="size-7 animate-spin text-amber-600" />
+                      <p className="text-xs font-medium">Scanning Firestore notifications...</p>
+                    </div>
+                  ) : notifItems.length === 0 ? (
+                    <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-zinc-200 p-8 text-center dark:border-white/10">
+                      <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="size-6" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                          No Notifications Found
+                        </p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                          {notifScope === "all_without_admin"
+                            ? "No notifications for non-admin staff in this view."
+                            : notifScope === "individual"
+                            ? "This staff member has 0 notifications."
+                            : "There are currently 0 notifications in the database."}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-zinc-200/90 overflow-hidden dark:border-white/10 bg-white/50 dark:bg-zinc-900/50">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-zinc-200/80 bg-zinc-50/80 dark:border-white/10 dark:bg-white/[0.02] text-zinc-500 font-bold uppercase tracking-wider text-[11px]">
+                              <th className="py-3 px-4 w-10 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (notifSelectedIds.length === notifItems.length) {
+                                      setNotifSelectedIds([]);
+                                    } else {
+                                      setNotifSelectedIds(notifItems.map((n) => n.id));
+                                    }
+                                  }}
+                                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                                  title="Toggle Select All"
+                                >
+                                  {notifSelectedIds.length > 0 &&
+                                  notifSelectedIds.length === notifItems.length ? (
+                                    <CheckSquare className="size-4 text-amber-600" />
+                                  ) : (
+                                    <Square className="size-4" />
+                                  )}
+                                </button>
+                              </th>
+                              <th className="py-3 px-3">Notification Alert</th>
+                              <th className="py-3 px-3">Recipient Staff</th>
+                              <th className="py-3 px-3">Category</th>
+                              <th className="py-3 px-3">Date & Time</th>
+                              <th className="py-3 px-3">Status</th>
+                              <th className="py-3 px-4 text-right">Delete</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-200/60 dark:divide-white/5">
+                            {notifItems.map((item) => {
+                              const isSelected = notifSelectedIds.includes(item.id);
+
+                              return (
+                                <tr
+                                  key={item.id}
+                                  className={cn(
+                                    "transition-colors hover:bg-zinc-50/70 dark:hover:bg-white/[0.02]",
+                                    isSelected && "bg-amber-50/50 dark:bg-amber-950/20"
+                                  )}
+                                >
+                                  <td className="py-3 px-4 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (isSelected) {
+                                          setNotifSelectedIds((prev) =>
+                                            prev.filter((id) => id !== item.id)
+                                          );
+                                        } else {
+                                          setNotifSelectedIds((prev) => [...prev, item.id]);
+                                        }
+                                      }}
+                                      className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                                    >
+                                      {isSelected ? (
+                                        <CheckSquare className="size-4 text-amber-600" />
+                                      ) : (
+                                        <Square className="size-4" />
+                                      )}
+                                    </button>
+                                  </td>
+
+                                  <td className="py-3 px-3 max-w-xs sm:max-w-md">
+                                    <p className="font-semibold text-zinc-900 dark:text-zinc-100">
+                                      {item.title}
+                                    </p>
+                                    {item.body && (
+                                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
+                                        {item.body}
+                                      </p>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 whitespace-nowrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-medium text-zinc-800 dark:text-zinc-200 text-xs">
+                                        {item.userName}
+                                      </span>
+                                      {item.isAdmin ? (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                                          Admin
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-100 dark:bg-white/5 text-zinc-600 dark:text-zinc-400">
+                                          Staff
+                                        </span>
+                                      )}
+                                    </div>
+                                    {item.userEmail && (
+                                      <p className="text-[10px] text-zinc-400 truncate">
+                                        {item.userEmail}
+                                      </p>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-3 whitespace-nowrap">
+                                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 dark:bg-white/5 text-zinc-700 dark:text-zinc-300">
+                                      {item.kind.replace(/_/g, " ")}
+                                    </span>
+                                  </td>
+
+                                  <td className="py-3 px-3 text-zinc-500 dark:text-zinc-400 text-xs whitespace-nowrap">
+                                    {item.createdAtMs
+                                      ? DateTime.fromMillis(item.createdAtMs).toFormat(
+                                          "LLL dd, yyyy · hh:mm a"
+                                        )
+                                      : "—"}
+                                  </td>
+
+                                  <td className="py-3 px-3 whitespace-nowrap">
+                                    {item.read ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                                        <Check className="size-3" /> Read
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400 font-bold">
+                                        ● Unread
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  <td className="py-3 px-4 text-right whitespace-nowrap">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => void deleteSingleNotif(item)}
+                                      disabled={notifDeleting}
+                                      className="size-7 text-zinc-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-colors cursor-pointer"
+                                      title="Delete notification permanently"
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
 
@@ -2359,19 +2979,27 @@ export default function AdminReportsPage() {
             document.body
           )}
 
-        {/* DangerConfirmModal for Storage Deletions */}
+        {/* DangerConfirmModal for Storage & Notification Deletions */}
         <DangerConfirmModal
-          open={Boolean(storageConfirmModal)}
-          onClose={() => setStorageConfirmModal(null)}
+          open={Boolean(storageConfirmModal) || Boolean(notifConfirmModal)}
+          onClose={() => {
+            setStorageConfirmModal(null);
+            setNotifConfirmModal(null);
+          }}
           onConfirm={async () => {
             if (storageConfirmModal) await storageConfirmModal.onConfirm();
+            if (notifConfirmModal) await notifConfirmModal.onConfirm();
           }}
-          title={storageConfirmModal?.title ?? "Danger Zone"}
-          subtitle={storageConfirmModal?.subtitle}
-          description={<p className="text-xs text-zinc-300">{storageConfirmModal?.description}</p>}
-          confirmText={storageConfirmModal?.confirmText ?? "Confirm"}
+          title={storageConfirmModal?.title ?? notifConfirmModal?.title ?? "Danger Zone"}
+          subtitle={storageConfirmModal?.subtitle ?? notifConfirmModal?.subtitle}
+          description={
+            <p className="text-xs text-zinc-300">
+              {storageConfirmModal?.description ?? notifConfirmModal?.description}
+            </p>
+          }
+          confirmText={storageConfirmModal?.confirmText ?? notifConfirmModal?.confirmText ?? "Confirm"}
           cancelText="Cancel"
-          loading={storageDeleting || Boolean(storageDeletingUrl)}
+          loading={storageDeleting || Boolean(storageDeletingUrl) || notifDeleting}
           variant="danger"
         />
       </div>

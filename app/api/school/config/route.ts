@@ -18,6 +18,10 @@ const updateSchema = z.object({
   sections: z.array(z.string()).optional(),
   classSections: z.record(z.string(), z.array(z.string())).optional(),
   teacherLateTime: z.string().optional(),
+  schoolOpenTime: z.string().optional(),
+  schoolCloseTime: z.string().optional(),
+  schoolSignOutDeadline: z.string().optional(),
+  signOutGraceHours: z.number().min(0).max(12).optional(),
 });
 
 /** GET /api/school/config - Returns current school configuration */

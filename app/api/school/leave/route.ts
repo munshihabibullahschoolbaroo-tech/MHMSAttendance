@@ -33,7 +33,9 @@ export async function GET(req: Request) {
     .where("teacherId", "==", auth.decoded.uid)
     .get();
 
-  const leaves = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const leaves = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((l: any) => l.type !== "late_sign_out" && !l.isLateSignOut);
   leaves.sort((a: any, b: any) => {
     const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
     const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
@@ -145,6 +147,7 @@ export async function POST(req: Request) {
       .get();
 
     for (const doc of existingTeacherLeavesSnap.docs) {
+      if (doc.get("type") === "late_sign_out" || doc.get("isLateSignOut")) continue;
       const s = String(doc.get("startDate") ?? "");
       const e = String(doc.get("endDate") ?? s);
       const existingDates = getDatesInRange(s, e);

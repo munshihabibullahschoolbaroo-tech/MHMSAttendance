@@ -18,9 +18,12 @@ import {
   Briefcase,
   Send,
   Building,
+  Moon,
+  Sunrise,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Input, formFieldLabelClass } from "@/components/ui/input";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
@@ -33,7 +36,7 @@ import { AppDatePicker } from "@/components/ui/app-date-picker";
 import { AppTimePicker } from "@/components/ui/app-time-picker";
 import { AppSelect } from "@/components/ui/app-select";
 import { Separator } from "@/components/ui/separator";
-import { isPastLateCutoff } from "@/lib/date/late-check";
+import { isPastLateCutoff, checkSignOutTiming } from "@/lib/date/late-check";
 
 function formatCheckInTime(raw: any): string {
   if (!raw) return "Today";
@@ -50,7 +53,34 @@ function formatCheckInTime(raw: any): string {
     else if (typeof raw.toDate === "function") ms = raw.toDate().getTime();
   }
   if (!ms || isNaN(ms)) return "Today";
-  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function formatCheckInDate(raw: any): string | null {
+  if (!raw) return null;
+  let ms: number | null = null;
+  if (typeof raw === "number") {
+    ms = raw > 1e11 ? raw : raw * 1000;
+  } else if (typeof raw === "string") {
+    const p = Date.parse(raw);
+    if (!isNaN(p)) ms = p;
+  } else if (typeof raw === "object") {
+    if (typeof raw.seconds === "number") ms = raw.seconds * 1000;
+    else if (typeof raw._seconds === "number") ms = raw._seconds * 1000;
+    else if (typeof raw.toMillis === "function") ms = raw.toMillis();
+    else if (typeof raw.toDate === "function") ms = raw.toDate().getTime();
+  }
+  if (!ms || isNaN(ms)) return null;
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(ms));
 }
 
 type TodayPayload = {
@@ -61,7 +91,11 @@ type TodayPayload = {
     latitude: number;
     longitude: number;
     radiusMeters: number;
+    schoolOpenTime?: string;
     teacherLateTime?: string;
+    schoolCloseTime?: string;
+    schoolSignOutDeadline?: string;
+    signOutGraceHours?: number;
   };
   teacher: {
     name: string;
@@ -82,6 +116,13 @@ type TodayPayload = {
     checkInGps?: { distanceM: number };
     status?: string;
     isLate?: boolean;
+    lateSignOutRequest?: {
+      isLate: boolean;
+      minutesLate: number;
+      reason: string;
+      status: "pending" | "approved" | "rejected";
+      timeFormatted?: string;
+    } | null;
     emergencyLeave?: {
       active: boolean;
       type: "school_duty" | "emergency";
@@ -106,15 +147,47 @@ type TodayPayload = {
 export function TeacherAttendanceHome() {
   const { user } = useDashboardUser();
   const [mounted, setMounted] = React.useState(false);
-  const [data, setData] = React.useState<TodayPayload | null>(null);
-  const [loading, setLoading] = React.useState(true);
+  const [data, setData] = React.useState<TodayPayload | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = sessionStorage.getItem("mhms_today_state_v1");
+        if (raw) return JSON.parse(raw) as TodayPayload;
+      } catch {}
+    }
+    return null;
+  });
+  const [loading, setLoading] = React.useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        if (sessionStorage.getItem("mhms_today_state_v1")) return false;
+      } catch {}
+    }
+    return true;
+  });
   const [punching, setPunching] = React.useState(false);
   const [punchOutConfirmOpen, setPunchOutConfirmOpen] = React.useState(false);
   const [lateWarningModalOpen, setLateWarningModalOpen] = React.useState(false);
   const [lateCheckData, setLateCheckData] = React.useState<{
     currentFormatted: string;
     cutoffFormatted: string;
+    openWindowStartFormatted?: string;
     minutesLate: number;
+    minutesUntilOpen?: number;
+    reason?: "before_open" | "morning_cutoff" | "after_closing";
+    openFormatted?: string;
+    closeFormatted?: string;
+    isBeforeOpen?: boolean;
+    isClosed?: boolean;
+  } | null>(null);
+
+  // Late Sign-Out state (After 7:00 PM requires reason / admin approval)
+  const [lateSignOutModalOpen, setLateSignOutModalOpen] = React.useState(false);
+  const [lateSignOutReason, setLateSignOutReason] = React.useState("");
+  const [lateSignOutTimingInfo, setLateSignOutTimingInfo] = React.useState<{
+    isLateSignOut: boolean;
+    minutesLate: number;
+    currentFormatted: string;
+    signOutDeadlineFormatted: string;
   } | null>(null);
 
   // Mobile Bottom Sheet state: "punch" | "leave" | "emergency" | null
@@ -145,7 +218,15 @@ export function TeacherAttendanceHome() {
   const [submittingEmergency, setSubmittingEmergency] = React.useState(false);
   const [adminsList, setAdminsList] = React.useState<
     Array<{ id: string; name: string; email: string; role?: string }>
-  >([]);
+  >(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const raw = sessionStorage.getItem("mhms_admins_list_v1");
+        if (raw) return JSON.parse(raw);
+      } catch {}
+    }
+    return [];
+  });
 
   React.useEffect(() => {
     setMounted(true);
@@ -165,6 +246,9 @@ export function TeacherAttendanceHome() {
           const json = await res.json();
           const list = json.admins ?? [];
           setAdminsList(list);
+          try {
+            sessionStorage.setItem("mhms_admins_list_v1", JSON.stringify(list));
+          } catch {}
           if (list.length > 0) {
             setEmergencyAdminUid(list[0].id);
           }
@@ -221,6 +305,9 @@ export function TeacherAttendanceHome() {
       if (res.ok) {
         const json = (await res.json()) as TodayPayload;
         setData(json);
+        try {
+          sessionStorage.setItem("mhms_today_state_v1", JSON.stringify(json));
+        } catch {}
         if (!leaveStart) setLeaveStart(json.date);
         if (!leaveEnd) setLeaveEnd(json.date);
       }
@@ -234,6 +321,65 @@ export function TeacherAttendanceHome() {
   React.useEffect(() => {
     void refreshStatus();
   }, [refreshStatus]);
+
+  // Live clock updated every 30 seconds
+  const [currentTime, setCurrentTime] = React.useState<Date>(() => new Date());
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Real-time evaluation of check-in opening (2 hours prior), late cutoff, and school closing
+  const lateCheckInfo = React.useMemo(() => {
+    return isPastLateCutoff(
+      currentTime,
+      data?.config?.teacherLateTime || "09:00 AM",
+      "Asia/Kolkata",
+      data?.config?.schoolCloseTime || "05:00 PM",
+      data?.config?.schoolOpenTime || "08:00 AM"
+    );
+  }, [currentTime, data?.config?.teacherLateTime, data?.config?.schoolCloseTime, data?.config?.schoolOpenTime]);
+
+  // Track calendar day rollover (Asia/Kolkata) so after 12:00 AM midnight, it refreshes to the new day automatically
+  React.useEffect(() => {
+    const checkDayRollover = () => {
+      const todayKey = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date());
+
+      if (data?.date && data.date !== todayKey) {
+        // Midnight has passed! Reset modal and refetch fresh session for the new day
+        setLateWarningModalOpen(false);
+        setLateCheckData(null);
+        void refreshStatus();
+      }
+    };
+
+    // Check periodically
+    const interval = setInterval(checkDayRollover, 15000);
+
+    // Also check on tab focus and visibility change (e.g. phone unlocked in morning)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkDayRollover();
+        void refreshStatus();
+      }
+    };
+    window.addEventListener("focus", onVisibilityChange);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onVisibilityChange);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [data?.date, refreshStatus]);
 
   // Request browser GPS position
   React.useEffect(() => {
@@ -356,16 +502,59 @@ export function TeacherAttendanceHome() {
     }
   };
 
-  // Punch In Handler with late arrival detection
+  // Punch In Handler with early arrival window, late arrival detection and school closed enforcement
   const handlePunchIn = () => {
     const cutoffStr = data?.config?.teacherLateTime || "09:00 AM";
-    const check = isPastLateCutoff(new Date(), cutoffStr);
+    const closeStr = data?.config?.schoolCloseTime || "05:00 PM";
+    const openStr = data?.config?.schoolOpenTime || "08:00 AM";
+    const check = isPastLateCutoff(new Date(), cutoffStr, "Asia/Kolkata", closeStr, openStr);
+
+    if (check.isBeforeOpen) {
+      setLateCheckData({
+        currentFormatted: check.currentFormatted,
+        cutoffFormatted: check.cutoffFormatted,
+        openWindowStartFormatted: check.openWindowStartFormatted,
+        minutesLate: 0,
+        minutesUntilOpen: check.minutesUntilOpen,
+        reason: "before_open",
+        openFormatted: check.openFormatted,
+        closeFormatted: check.closeFormatted,
+        isBeforeOpen: true,
+        isClosed: false,
+      });
+      setActiveSheet(null);
+      setLateWarningModalOpen(true);
+      return;
+    }
+
+    if (check.isClosed) {
+      setLateCheckData({
+        currentFormatted: check.currentFormatted,
+        cutoffFormatted: check.cutoffFormatted,
+        openWindowStartFormatted: check.openWindowStartFormatted,
+        minutesLate: check.minutesLate,
+        reason: "after_closing",
+        openFormatted: check.openFormatted,
+        closeFormatted: check.closeFormatted,
+        isBeforeOpen: false,
+        isClosed: true,
+      });
+      setActiveSheet(null);
+      setLateWarningModalOpen(true);
+      return;
+    }
 
     if (check.isLate) {
       setLateCheckData({
         currentFormatted: check.currentFormatted,
         cutoffFormatted: check.cutoffFormatted,
+        openWindowStartFormatted: check.openWindowStartFormatted,
         minutesLate: check.minutesLate,
+        reason: "morning_cutoff",
+        openFormatted: check.openFormatted,
+        closeFormatted: check.closeFormatted,
+        isBeforeOpen: false,
+        isClosed: false,
       });
       setActiveSheet(null);
       setLateWarningModalOpen(true);
@@ -375,7 +564,25 @@ export function TeacherAttendanceHome() {
     void executePunchIn();
   };
 
-  // Punch Out Handler (Requires campus GPS geofence validation)
+  // Initiate Punch Out — checks if past sign-out deadline (e.g. 07:00 PM)
+  const initiatePunchOut = () => {
+    const deadline = data?.config?.schoolSignOutDeadline || "07:00 PM";
+    const closeTime = data?.config?.schoolCloseTime || "05:00 PM";
+    const check = checkSignOutTiming(new Date(), deadline, "Asia/Kolkata", closeTime);
+
+    if (check.isLateSignOut) {
+      setLateSignOutTimingInfo(check);
+      setActiveSheet(null);
+      setPunchOutConfirmOpen(false);
+      setLateSignOutModalOpen(true);
+      return;
+    }
+
+    setActiveSheet(null);
+    setPunchOutConfirmOpen(true);
+  };
+
+  // Punch Out Handler (On-time, requires campus GPS geofence validation)
   const handlePunchOut = async () => {
     if (!gpsCoords) {
       toast.error("Waiting for GPS location fix. You must be inside school campus to punch out.");
@@ -409,6 +616,47 @@ export function TeacherAttendanceHome() {
       setActiveSheet(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to check out");
+    } finally {
+      setPunching(false);
+    }
+  };
+
+  // Late Sign-Out submission handler (allows remote sign-out, requires reason, sends for admin approval)
+  const submitLateSignOut = async () => {
+    if (!lateSignOutReason.trim() || lateSignOutReason.trim().length < 3) {
+      toast.error("Please provide a reason explaining why you are signing out late.");
+      return;
+    }
+
+    setPunching(true);
+    try {
+      const auth = getFirebaseAuth();
+      const u = auth.currentUser;
+      if (!u) throw new Error("Not signed in");
+      const token = await u.getIdToken();
+
+      const res = await fetch("/api/school/attendance/check-out", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          latitude: gpsCoords?.lat ?? null,
+          longitude: gpsCoords?.lng ?? null,
+          reason: lateSignOutReason.trim(),
+        }),
+      });
+
+      const resJson = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(resJson.error ?? "Submission failed");
+
+      toast.success(resJson.message ?? "Late sign-out request submitted for administration approval!");
+      setLateSignOutModalOpen(false);
+      setLateSignOutReason("");
+      await refreshStatus();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to submit late sign-out request");
     } finally {
       setPunching(false);
     }
@@ -572,8 +820,28 @@ export function TeacherAttendanceHome() {
 
   if (loading) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600 dark:text-blue-400" />
+      <div className="space-y-6 max-w-5xl mx-auto animate-pulse">
+        {/* Header Skeleton */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-zinc-200/80 bg-white dark:border-white/10 dark:bg-white/[0.02]">
+          <div className="space-y-2">
+            <Skeleton className="h-6 w-48 rounded-lg" />
+            <Skeleton className="h-4 w-72 rounded-lg" />
+          </div>
+          <Skeleton className="h-10 w-36 rounded-xl" />
+        </div>
+
+        {/* Status Card Skeleton */}
+        <div className="rounded-2xl border border-zinc-200/80 bg-white p-6 dark:border-white/10 dark:bg-white/[0.02] space-y-5">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-5 w-32 rounded-lg" />
+            <Skeleton className="h-6 w-24 rounded-full" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Skeleton className="h-28 rounded-xl" />
+            <Skeleton className="h-28 rounded-xl" />
+          </div>
+          <Skeleton className="h-14 w-full rounded-xl" />
+        </div>
       </div>
     );
   }
@@ -1136,6 +1404,16 @@ export function TeacherAttendanceHome() {
                   <FileCheck className="h-3.5 w-3.5" />
                   On Approved Leave
                 </span>
+              ) : lateCheckInfo.isBeforeOpen ? (
+                <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20">
+                  <Sunrise className="h-3.5 w-3.5 text-sky-500" />
+                  Opens at {lateCheckInfo.openWindowStartFormatted}
+                </span>
+              ) : lateCheckInfo.isClosed ? (
+                <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20">
+                  <Moon className="h-3.5 w-3.5 text-indigo-500" />
+                  School Closed
+                </span>
               ) : (
                 <span className="text-xs font-medium text-zinc-500 px-2 py-0.5 rounded bg-zinc-100 dark:bg-white/5">
                   Not Punched In
@@ -1182,8 +1460,53 @@ export function TeacherAttendanceHome() {
                     </Button>
                   </div>
                 </div>
+              ) : lateCheckInfo.isBeforeOpen ? (
+                <div className="rounded-2xl border border-sky-500/30 bg-gradient-to-br from-sky-500/10 via-blue-500/5 to-transparent p-6 text-center space-y-3.5">
+                  <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-sky-500/15 border border-sky-500/30 text-sky-600 dark:text-sky-400 shadow-inner">
+                    <Sunrise className="size-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-extrabold text-zinc-900 dark:text-zinc-100">
+                      Check-in Opens at {lateCheckInfo.openWindowStartFormatted}
+                    </h4>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                      Morning punch-in begins strictly 2 hours before school opening ({data?.config?.schoolOpenTime || "08:00 AM"}). Current time is {lateCheckInfo.currentFormatted}.
+                    </p>
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-100/70 dark:bg-sky-950/40 text-[11px] font-semibold text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/40">
+                    <Clock className="size-3.5 text-sky-500" />
+                    <span>Check-in window: {lateCheckInfo.openWindowStartFormatted} – {data?.config?.teacherLateTime || "09:00 AM"}</span>
+                  </div>
+                </div>
+              ) : lateCheckInfo.isClosed ? (
+                <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent p-6 text-center space-y-3.5">
+                  <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-500 dark:text-indigo-400 shadow-inner">
+                    <Moon className="size-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-extrabold text-zinc-900 dark:text-zinc-100">
+                      School is Closed for Today
+                    </h4>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                      Campus hours officially closed at {data?.config?.schoolCloseTime || "05:00 PM"}. Attendance cannot be marked at this time. Enjoy your evening and have a wonderful rest!
+                    </p>
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-100 dark:bg-white/10 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-white/10">
+                    <Clock className="size-3.5 text-indigo-500" />
+                    <span>Doors reopen tomorrow morning at {data?.config?.schoolOpenTime || "08:00 AM"}</span>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-3">
+                  {lateCheckInfo.isLate && (
+                    <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+                      <AlertTriangle className="size-4 shrink-0 text-amber-500" />
+                      <span>
+                        Past morning cutoff ({data?.config?.teacherLateTime || "09:00 AM"}). Punching in will be recorded as late arrival.
+                      </span>
+                    </div>
+                  )}
+
                   <Button
                     type="button"
                     size="lg"
@@ -1221,6 +1544,11 @@ export function TeacherAttendanceHome() {
                     <p className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
                       {formatCheckInTime(data?.session?.checkInTime)}
                     </p>
+                    {formatCheckInDate(data?.session?.checkInTime) && (
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400 block mt-0.5">
+                        {formatCheckInDate(data?.session?.checkInTime)}
+                      </span>
+                    )}
                   </div>
                   {data?.session?.checkInGps?.distanceM !== undefined && (
                     <div className="text-right">
@@ -1288,17 +1616,65 @@ export function TeacherAttendanceHome() {
                   </Button>
                 )}
 
-                <Button
-                  type="button"
-                  size="lg"
-                  variant="outline"
-                  disabled={punching}
-                  onClick={() => setPunchOutConfirmOpen(true)}
-                  className="h-12 w-full gap-2.5 border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 hover:text-red-800 dark:border-red-500/40 dark:text-red-400 font-semibold text-sm shadow-sm cursor-pointer"
-                >
-                  {punching ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-                  <span>Sign Out / Punch Out from School</span>
-                </Button>
+                {/* Late Sign-Out Status Card: If submitted, replace Punch Out button with completion/approval card */}
+                {data?.session?.lateSignOutRequest ? (
+                  data.session.lateSignOutRequest.status === "approved" || isCheckedOut ? (
+                    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-center dark:border-white/10 dark:bg-white/[0.02]">
+                      <CheckCircle2 className="h-8 w-8 text-emerald-600 mx-auto mb-1" />
+                      <h4 className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
+                        Day Completed!
+                      </h4>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Your late sign-out has been approved by administration. See you tomorrow!
+                      </p>
+                    </div>
+                  ) : data.session.lateSignOutRequest.status === "rejected" ? (
+                    <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-center space-y-2">
+                      <div className="flex items-center justify-center gap-1.5 text-red-600 dark:text-red-400 font-bold text-sm">
+                        <AlertTriangle className="size-5" />
+                        <span>Late Sign-Out Not Approved</span>
+                      </div>
+                      <p className="text-xs text-red-600/90 dark:text-red-400/90">
+                        Administration did not approve your late sign-out request. Your attendance for today is marked as <strong>Absent</strong>. Please reach out to the school administration office if you need this reviewed.
+                      </p>
+                    </div>
+                  ) : (
+                    /* PENDING APPROVAL */
+                    <div className="rounded-2xl border border-amber-500/30 bg-amber-50/60 dark:bg-amber-950/20 p-4 text-center space-y-2.5">
+                      <div className="flex items-center justify-center gap-2">
+                        <Clock className="size-5 text-amber-600 animate-pulse" />
+                        <h4 className="font-bold text-sm text-amber-900 dark:text-amber-200">
+                          Sign-Out Submitted — Awaiting Admin Approval
+                        </h4>
+                      </div>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed max-w-sm mx-auto">
+                        Your late sign-out was submitted successfully. <strong>School administration will review and approve your attendance completion.</strong> Please reach out to administration once if you need immediate verification.
+                      </p>
+                      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-semibold">
+                        <span>Submitted at {data.session.lateSignOutRequest.timeFormatted || "Late Evening"}</span>
+                        <span>•</span>
+                        <span className="capitalize">{data.session.lateSignOutRequest.status}</span>
+                      </div>
+                      {data.session.lateSignOutRequest.reason && (
+                        <p className="text-[11px] text-zinc-500 italic">
+                          &quot;{data.session.lateSignOutRequest.reason}&quot;
+                        </p>
+                      )}
+                    </div>
+                  )
+                ) : (
+                  <Button
+                    type="button"
+                    size="lg"
+                    variant="outline"
+                    disabled={punching}
+                    onClick={initiatePunchOut}
+                    className="h-12 w-full gap-2.5 border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 hover:text-red-800 dark:border-red-500/40 dark:text-red-400 font-semibold text-sm shadow-sm cursor-pointer"
+                  >
+                    {punching ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+                    <span>Sign Out / Punch Out from School</span>
+                  </Button>
+                )}
               </div>
             )}
 
@@ -1398,37 +1774,91 @@ export function TeacherAttendanceHome() {
                                 </Button>
                               </div>
                             </div>
-                          ) : (
-                            <div className="space-y-3">
-                              {/* Amber notice if past late cutoff */}
-                              {isPastLateCutoff(new Date(), data?.config?.teacherLateTime || "09:00 AM").isLate && (
-                                <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-                                  <AlertTriangle className="size-4 shrink-0 text-amber-500" />
-                                  <span>
-                                    Past morning cutoff ({data?.config?.teacherLateTime || "09:00 AM"}). Punching in will be recorded as late arrival.
-                                  </span>
-                                </div>
-                              )}
+                          ) : (() => {
+                            const check = isPastLateCutoff(
+                              currentTime,
+                              data?.config?.teacherLateTime || "09:00 AM",
+                              "Asia/Kolkata",
+                              data?.config?.schoolCloseTime || "05:00 PM",
+                              data?.config?.schoolOpenTime || "08:00 AM"
+                            );
 
-                              <Button
-                                type="button"
-                                size="lg"
-                                disabled={punching}
-                                onClick={() => void handlePunchIn()}
-                                className="h-14 w-full gap-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-base shadow-lg shadow-blue-500/20 active:scale-[0.99]"
-                              >
-                                {punching ? (
-                                  <Loader2 className="h-5 w-5 animate-spin" />
-                                ) : (
-                                  <LogIn className="h-5 w-5" />
+                            if (check.isBeforeOpen) {
+                              return (
+                                <div className="rounded-2xl border border-sky-500/30 bg-gradient-to-br from-sky-500/10 via-blue-500/5 to-transparent p-6 text-center space-y-3.5">
+                                  <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-sky-500/15 border border-sky-500/30 text-sky-600 dark:text-sky-400 shadow-inner">
+                                    <Sunrise className="size-6 animate-pulse" />
+                                  </div>
+                                  <div>
+                                    <h4 className="text-base font-extrabold text-zinc-900 dark:text-zinc-100">
+                                      Check-in Opens at {check.openWindowStartFormatted}
+                                    </h4>
+                                    <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                                      Morning login begins strictly 2 hours before school opening ({data?.config?.schoolOpenTime || "08:00 AM"}). Current time is {check.currentFormatted}.
+                                    </p>
+                                  </div>
+                                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-100/70 dark:bg-sky-950/40 text-[11px] font-semibold text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/40">
+                                    <Clock className="size-3.5 text-sky-500" />
+                                    <span>Check-in window: {check.openWindowStartFormatted} – {data?.config?.teacherLateTime || "09:00 AM"}</span>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (check.isClosed) {
+                              return (
+                                <div className="rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent p-6 text-center space-y-3.5">
+                                  <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-500 dark:text-indigo-400 shadow-inner">
+                                    <Moon className="size-6 animate-pulse" />
+                                  </div>
+                                  <div>
+                                    <h4 className="text-base font-extrabold text-zinc-900 dark:text-zinc-100">
+                                      School is Closed for Today
+                                    </h4>
+                                    <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                                      Campus hours officially closed at {data?.config?.schoolCloseTime || "05:00 PM"}. Attendance cannot be marked at this time. Enjoy your evening and have a wonderful rest!
+                                    </p>
+                                  </div>
+                                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-100 dark:bg-white/10 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-white/10">
+                                    <Clock className="size-3.5 text-indigo-500" />
+                                    <span>Doors reopen tomorrow morning at {data?.config?.schoolOpenTime || "08:00 AM"}</span>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div className="space-y-3">
+                                {/* Amber notice if past late cutoff */}
+                                {check.isLate && (
+                                  <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+                                    <AlertTriangle className="size-4 shrink-0 text-amber-500" />
+                                    <span>
+                                      Past morning cutoff ({data?.config?.teacherLateTime || "09:00 AM"}). Punching in will be recorded as late arrival.
+                                    </span>
+                                  </div>
                                 )}
-                                <span>{punching ? "Verifying Geofence…" : "Punch In Now"}</span>
-                              </Button>
-                              <p className="text-center text-[11px] text-zinc-500">
-                                Validates your live GPS location inside {config?.radiusMeters}m of campus premises.
-                              </p>
-                            </div>
-                          )
+
+                                <Button
+                                  type="button"
+                                  size="lg"
+                                  disabled={punching}
+                                  onClick={() => void handlePunchIn()}
+                                  className="h-14 w-full gap-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-base shadow-lg shadow-blue-500/20 active:scale-[0.99]"
+                                >
+                                  {punching ? (
+                                    <Loader2 className="h-5 w-5 animate-spin" />
+                                  ) : (
+                                    <LogIn className="h-5 w-5" />
+                                  )}
+                                  <span>{punching ? "Verifying Geofence…" : "Punch In Now"}</span>
+                                </Button>
+                                <p className="text-center text-[11px] text-zinc-500">
+                                  Validates your live GPS location inside {config?.radiusMeters}m of campus premises.
+                                </p>
+                              </div>
+                            );
+                          })()
                         ) : isCheckedOut ? (
                           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-5 text-center dark:border-white/10 dark:bg-white/[0.02]">
                             <CheckCircle2 className="h-9 w-9 text-emerald-600 mx-auto mb-1.5" />
@@ -1447,6 +1877,11 @@ export function TeacherAttendanceHome() {
                                 <p className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
                                   {formatCheckInTime(data?.session?.checkInTime)}
                                 </p>
+                                {formatCheckInDate(data?.session?.checkInTime) && (
+                                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400 block mt-0.5">
+                                    {formatCheckInDate(data?.session?.checkInTime)}
+                                  </span>
+                                )}
                               </div>
                               {data?.session?.checkInGps?.distanceM !== undefined && (
                                 <div className="text-right">
@@ -1514,25 +1949,70 @@ export function TeacherAttendanceHome() {
                               </Button>
                             )}
 
-                            <div className="space-y-2">
-                              <Button
-                                type="button"
-                                size="lg"
-                                variant="outline"
-                                disabled={punching}
-                                onClick={() => {
-                                  setActiveSheet(null);
-                                  setPunchOutConfirmOpen(true);
-                                }}
-                                className="h-12 w-full gap-2.5 border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:border-red-500/40 dark:text-red-400 font-semibold text-sm shadow-sm cursor-pointer"
-                              >
-                                {punching ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-                                <span>Sign Out / Punch Out from School</span>
-                              </Button>
-                              <p className="text-center text-[11px] text-zinc-500">
-                                Validates your live GPS location inside {config?.radiusMeters}m of campus to sign out.
-                              </p>
-                            </div>
+                            {/* Late Sign-Out Status Card: If submitted, replace Punch Out button with completion/approval card */}
+                            {data?.session?.lateSignOutRequest ? (
+                              data.session.lateSignOutRequest.status === "approved" || isCheckedOut ? (
+                                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-center dark:border-white/10 dark:bg-white/[0.02]">
+                                  <CheckCircle2 className="h-8 w-8 text-emerald-600 mx-auto mb-1" />
+                                  <h4 className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
+                                    Day Completed!
+                                  </h4>
+                                  <p className="text-xs text-zinc-500 mt-1">
+                                    Your late sign-out has been approved by administration. See you tomorrow!
+                                  </p>
+                                </div>
+                              ) : data.session.lateSignOutRequest.status === "rejected" ? (
+                                <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-center space-y-2">
+                                  <div className="flex items-center justify-center gap-1.5 text-red-600 dark:text-red-400 font-bold text-sm">
+                                    <AlertTriangle className="size-5" />
+                                    <span>Late Sign-Out Not Approved</span>
+                                  </div>
+                                  <p className="text-xs text-red-600/90 dark:text-red-400/90">
+                                    Administration did not approve your late sign-out request. Your attendance for today is marked as <strong>Absent</strong>. Please reach out to the school administration office if you need this reviewed.
+                                  </p>
+                                </div>
+                              ) : (
+                                /* PENDING APPROVAL */
+                                <div className="rounded-2xl border border-amber-500/30 bg-amber-50/60 dark:bg-amber-950/20 p-4 text-center space-y-2.5">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <Clock className="size-5 text-amber-600 animate-pulse" />
+                                    <h4 className="font-bold text-sm text-amber-900 dark:text-amber-200">
+                                      Sign-Out Submitted — Awaiting Admin Approval
+                                    </h4>
+                                  </div>
+                                  <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed max-w-sm mx-auto">
+                                    Your late sign-out was submitted successfully. <strong>School administration will review and approve your attendance completion.</strong> Please reach out to administration once if you need immediate verification.
+                                  </p>
+                                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-semibold">
+                                    <span>Submitted at {data.session.lateSignOutRequest.timeFormatted || "Late Evening"}</span>
+                                    <span>•</span>
+                                    <span className="capitalize">{data.session.lateSignOutRequest.status}</span>
+                                  </div>
+                                  {data.session.lateSignOutRequest.reason && (
+                                    <p className="text-[11px] text-zinc-500 italic">
+                                      &quot;{data.session.lateSignOutRequest.reason}&quot;
+                                    </p>
+                                  )}
+                                </div>
+                              )
+                            ) : (
+                              <div className="space-y-2">
+                                <Button
+                                  type="button"
+                                  size="lg"
+                                  variant="outline"
+                                  disabled={punching}
+                                  onClick={initiatePunchOut}
+                                  className="h-12 w-full gap-2.5 border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:border-red-500/40 dark:text-red-400 font-semibold text-sm shadow-sm cursor-pointer"
+                                >
+                                  {punching ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+                                  <span>Sign Out / Punch Out from School</span>
+                                </Button>
+                                <p className="text-center text-[11px] text-zinc-500">
+                                  Validates your live GPS location inside {config?.radiusMeters}m of campus to sign out.
+                                </p>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -1629,9 +2109,27 @@ export function TeacherAttendanceHome() {
                   transition={{ duration: 0.2 }}
                   className="relative z-10 w-full max-w-md"
                 >
-                  <Card className="relative overflow-hidden border-amber-500/40 shadow-2xl shadow-amber-950/20 dark:border-amber-500/40 dark:bg-zinc-950">
-                    {/* Top ambient amber glow strip */}
-                    <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500" />
+                  <Card
+                    className={cn(
+                      "relative overflow-hidden shadow-2xl transition-all",
+                      lateCheckData?.isBeforeOpen
+                        ? "border-sky-500/40 shadow-sky-950/20 dark:border-sky-500/40 dark:bg-zinc-950"
+                        : lateCheckData?.isClosed
+                        ? "border-indigo-500/40 shadow-indigo-950/20 dark:border-indigo-500/40 dark:bg-zinc-950"
+                        : "border-amber-500/40 shadow-amber-950/20 dark:border-amber-500/40 dark:bg-zinc-950"
+                    )}
+                  >
+                    {/* Top ambient glow strip */}
+                    <div
+                      className={cn(
+                        "absolute top-0 left-0 right-0 h-1.5",
+                        lateCheckData?.isBeforeOpen
+                          ? "bg-gradient-to-r from-sky-500 via-blue-500 to-sky-500"
+                          : lateCheckData?.isClosed
+                          ? "bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500"
+                          : "bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500"
+                      )}
+                    />
 
                     {/* Top Right Close Button */}
                     <button
@@ -1646,15 +2144,47 @@ export function TeacherAttendanceHome() {
 
                     <CardHeader className="pb-3 pr-12 pt-6">
                       <div className="flex items-center gap-3">
-                        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-500 shadow-inner">
-                          <AlertTriangle className="size-6 animate-pulse" />
+                        <div
+                          className={cn(
+                            "flex size-11 shrink-0 items-center justify-center rounded-2xl border shadow-inner",
+                            lateCheckData?.isBeforeOpen
+                              ? "bg-sky-500/15 border-sky-500/30 text-sky-500"
+                              : lateCheckData?.isClosed
+                              ? "bg-indigo-500/15 border-indigo-500/30 text-indigo-400"
+                              : "bg-amber-500/15 border-amber-500/30 text-amber-500"
+                          )}
+                        >
+                          {lateCheckData?.isBeforeOpen ? (
+                            <Sunrise className="size-6 animate-pulse" />
+                          ) : lateCheckData?.isClosed ? (
+                            <Moon className="size-6 animate-pulse" />
+                          ) : (
+                            <AlertTriangle className="size-6 animate-pulse" />
+                          )}
                         </div>
                         <div>
-                          <CardTitle className="text-lg font-black text-amber-600 dark:text-amber-400 tracking-tight">
-                            You are late, sir!
+                          <CardTitle
+                            className={cn(
+                              "text-lg font-black tracking-tight",
+                              lateCheckData?.isBeforeOpen
+                                ? "text-sky-600 dark:text-sky-400"
+                                : lateCheckData?.isClosed
+                                ? "text-indigo-600 dark:text-indigo-400"
+                                : "text-amber-600 dark:text-amber-400"
+                            )}
+                          >
+                            {lateCheckData?.isBeforeOpen
+                              ? "Check-in Not Open Yet"
+                              : lateCheckData?.isClosed
+                              ? "School is Closed for Today"
+                              : "You are late, sir!"}
                           </CardTitle>
                           <CardDescription className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                            Morning School Arrival Cutoff Exceeded
+                            {lateCheckData?.isBeforeOpen
+                              ? `Morning Check-in Starts at ${lateCheckData.openWindowStartFormatted || "06:00 AM"}`
+                              : lateCheckData?.isClosed
+                              ? `Campus Hours Ended at ${lateCheckData.closeFormatted || "05:00 PM"}`
+                              : "Morning School Arrival Cutoff Exceeded"}
                           </CardDescription>
                         </div>
                       </div>
@@ -1662,64 +2192,143 @@ export function TeacherAttendanceHome() {
 
                     <CardContent className="space-y-4 pt-1">
                       {/* Breakdown card */}
-                      <div className="rounded-2xl border border-amber-500/20 bg-amber-50/60 dark:bg-amber-950/20 p-3.5 space-y-2.5 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="text-zinc-600 dark:text-zinc-400">Scheduled Cutoff:</span>
-                          <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-900 px-2 py-0.5 rounded-md border border-zinc-200 dark:border-white/10">
-                            {lateCheckData?.cutoffFormatted || "09:00 AM"}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-zinc-600 dark:text-zinc-400">Your Current Time:</span>
-                          <span className="font-mono font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
-                            {lateCheckData?.currentFormatted}
-                          </span>
-                        </div>
-                        {lateCheckData?.minutesLate ? (
-                          <div className="flex items-center justify-between">
-                            <span className="text-zinc-600 dark:text-zinc-400">Delayed By:</span>
-                            <span className="font-bold text-red-600 dark:text-red-400">
-                              +{lateCheckData.minutesLate} minutes late
-                            </span>
-                          </div>
-                        ) : null}
+                      <div
+                        className={cn(
+                          "rounded-2xl border p-3.5 space-y-2.5 text-xs",
+                          lateCheckData?.isBeforeOpen
+                            ? "border-sky-500/20 bg-sky-50/60 dark:bg-sky-950/20"
+                            : lateCheckData?.isClosed
+                            ? "border-indigo-500/20 bg-indigo-50/60 dark:bg-indigo-950/20"
+                            : "border-amber-500/20 bg-amber-50/60 dark:bg-amber-950/20"
+                        )}
+                      >
+                        {lateCheckData?.isBeforeOpen ? (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="text-zinc-600 dark:text-zinc-400">School Opening Time:</span>
+                              <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-900 px-2 py-0.5 rounded-md border border-zinc-200 dark:border-white/10">
+                                {lateCheckData.openFormatted || "08:00 AM"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-zinc-600 dark:text-zinc-400">Check-in Window Begins:</span>
+                              <span className="font-mono font-bold text-sky-600 dark:text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md border border-sky-500/20">
+                                {lateCheckData.openWindowStartFormatted || "06:00 AM"} (2 hrs before open)
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-zinc-600 dark:text-zinc-400">Your Current Time:</span>
+                              <span className="font-mono font-bold text-zinc-800 dark:text-zinc-200 bg-white dark:bg-zinc-900 px-2 py-0.5 rounded-md border border-zinc-200 dark:border-white/10">
+                                {lateCheckData.currentFormatted}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-zinc-600 dark:text-zinc-400">Window Status:</span>
+                              <span className="font-bold text-sky-600 dark:text-sky-400">
+                                Not Open Yet (Wait until {lateCheckData.openWindowStartFormatted || "06:00 AM"})
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="text-zinc-600 dark:text-zinc-400">
+                                {lateCheckData?.isClosed ? "School Closing Time:" : "Scheduled Cutoff:"}
+                              </span>
+                              <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-900 px-2 py-0.5 rounded-md border border-zinc-200 dark:border-white/10">
+                                {lateCheckData?.isClosed
+                                  ? lateCheckData.closeFormatted || "05:00 PM"
+                                  : lateCheckData?.cutoffFormatted || "09:00 AM"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-zinc-600 dark:text-zinc-400">Your Current Time:</span>
+                              <span
+                                className={cn(
+                                  "font-mono font-bold px-2 py-0.5 rounded-md border",
+                                  lateCheckData?.isClosed
+                                    ? "text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/20"
+                                    : "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20"
+                                )}
+                              >
+                                {lateCheckData?.currentFormatted}
+                              </span>
+                            </div>
+                            {lateCheckData?.isClosed ? (
+                              <div className="flex items-center justify-between">
+                                <span className="text-zinc-600 dark:text-zinc-400">Campus Status:</span>
+                                <span className="font-bold text-indigo-600 dark:text-indigo-400">
+                                  Closed for Today (No Attendance)
+                                </span>
+                              </div>
+                            ) : lateCheckData?.minutesLate ? (
+                              <div className="flex items-center justify-between">
+                                <span className="text-zinc-600 dark:text-zinc-400">Delayed By:</span>
+                                <span className="font-bold text-red-600 dark:text-red-400">
+                                  +{lateCheckData.minutesLate} minutes late
+                                </span>
+                              </div>
+                            ) : null}
+                          </>
+                        )}
                       </div>
 
                       <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                        School rules require daily check-in before the morning cutoff. Punching in now will record your attendance as <strong className="text-amber-600 dark:text-amber-400">Late Arrival</strong> in official school administration records.
+                        {lateCheckData?.isBeforeOpen
+                          ? `School rules permit daily check-in starting strictly 2 hours before school opening time. For today, check-in begins at ${lateCheckData.openWindowStartFormatted || "06:00 AM"}. Attendance cannot be marked earlier.`
+                          : lateCheckData?.isClosed
+                          ? `School hours officially closed at ${lateCheckData.closeFormatted || "05:00 PM"}. Attendance can no longer be recorded for today. Please enjoy your evening and have a wonderful rest! Doors reopen tomorrow morning at ${lateCheckData.openFormatted || "08:00 AM"}.`
+                          : `School rules require daily check-in before the morning cutoff (${lateCheckData?.cutoffFormatted || "09:00 AM"}). Punching in now will record your attendance as Late Arrival in official school administration records.`}
                       </p>
 
-                      {/* Check-In Button inside late card */}
-                      <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
-                        <Button
-                          type="button"
-                          disabled={punching}
-                          onClick={() => void executePunchIn()}
-                          className="w-full sm:flex-1 h-10 rounded-xl font-bold text-xs bg-amber-600 hover:bg-amber-500 text-white shadow-md shadow-amber-600/25 gap-2 cursor-pointer transition-all active:scale-[0.98]"
-                        >
-                          {punching ? (
-                            <>
-                              <Loader2 className="size-4 animate-spin" />
-                              <span>Verifying & Checking In…</span>
-                            </>
-                          ) : (
-                            <>
-                              <LogIn className="size-4" />
-                              <span>Check In as Late (Confirm)</span>
-                            </>
-                          )}
-                        </Button>
+                      {/* Modal Action Buttons */}
+                      {lateCheckData?.isBeforeOpen || lateCheckData?.isClosed ? (
+                        <div className="pt-2">
+                          <Button
+                            type="button"
+                            onClick={() => setLateWarningModalOpen(false)}
+                            className={cn(
+                              "w-full h-11 rounded-xl font-bold text-xs text-white shadow-md cursor-pointer transition-all active:scale-[0.98]",
+                              lateCheckData?.isBeforeOpen
+                                ? "bg-sky-600 hover:bg-sky-500 shadow-sky-600/25"
+                                : "bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/25"
+                            )}
+                          >
+                            Understood / Close
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+                          <Button
+                            type="button"
+                            disabled={punching}
+                            onClick={() => void executePunchIn()}
+                            className="w-full sm:flex-1 h-10 rounded-xl font-bold text-xs bg-amber-600 hover:bg-amber-500 text-white shadow-md shadow-amber-600/25 gap-2 cursor-pointer transition-all active:scale-[0.98]"
+                          >
+                            {punching ? (
+                              <>
+                                <Loader2 className="size-4 animate-spin" />
+                                <span>Verifying & Checking In…</span>
+                              </>
+                            ) : (
+                              <>
+                                <LogIn className="size-4" />
+                                <span>Check In as Late (Confirm)</span>
+                              </>
+                            )}
+                          </Button>
 
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={punching}
-                          onClick={() => setLateWarningModalOpen(false)}
-                          className="w-full sm:w-auto h-10 rounded-xl text-xs font-semibold border-zinc-200 dark:border-white/10"
-                        >
-                          Cancel
-                        </Button>
-                      </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={punching}
+                            onClick={() => setLateWarningModalOpen(false)}
+                            className="w-full sm:w-auto h-10 rounded-xl text-xs font-semibold border-zinc-200 dark:border-white/10"
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </motion.div>
@@ -1779,6 +2388,136 @@ export function TeacherAttendanceHome() {
                   </div>
 
                   {renderEmergencyForm(false)}
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
+      {/* Late Sign-Out Approval Request Modal (Past 7:00 PM) */}
+      {mounted &&
+        createPortal(
+          <AnimatePresence>
+            {lateSignOutModalOpen && (
+              <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                  onClick={() => !punching && setLateSignOutModalOpen(false)}
+                />
+
+                <motion.div
+                  initial={{ scale: 0.95, opacity: 0, y: 12 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ scale: 0.95, opacity: 0, y: 12 }}
+                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                  className="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-rose-500/30 bg-white shadow-2xl dark:border-rose-500/25 dark:bg-zinc-950 flex flex-col"
+                >
+                  <Card className="border-0 shadow-none bg-transparent">
+                    <button
+                      type="button"
+                      disabled={punching}
+                      onClick={() => setLateSignOutModalOpen(false)}
+                      className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
+                      aria-label="Close"
+                    >
+                      <X className="size-4" />
+                    </button>
+
+                    <CardHeader className="pb-3 pr-12 pt-6">
+                      <div className="flex items-center gap-3">
+                        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-rose-500/30 bg-rose-500/15 text-rose-500 shadow-inner">
+                          <Moon className="size-6 animate-pulse" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-lg font-black tracking-tight text-rose-600 dark:text-rose-400">
+                            Late School Sign-Out
+                          </CardTitle>
+                          <CardDescription className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                            Official Sign-Out Deadline Exceeded
+                          </CardDescription>
+                        </div>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="space-y-4 pt-1">
+                      {/* Breakdown card */}
+                      <div className="rounded-2xl border border-rose-500/20 bg-rose-50/60 dark:bg-rose-950/20 p-3.5 space-y-2.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-zinc-600 dark:text-zinc-400">Sign-Out Deadline:</span>
+                          <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-900 px-2 py-0.5 rounded-md border border-zinc-200 dark:border-white/10">
+                            {lateSignOutTimingInfo?.signOutDeadlineFormatted || "07:00 PM"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-zinc-600 dark:text-zinc-400">Your Current Time:</span>
+                          <span className="font-mono font-bold px-2 py-0.5 rounded-md border text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/20">
+                            {lateSignOutTimingInfo?.currentFormatted || "Late evening"}
+                          </span>
+                        </div>
+                        {lateSignOutTimingInfo?.minutesLate ? (
+                          <div className="flex items-center justify-between">
+                            <span className="text-zinc-600 dark:text-zinc-400">Delayed By:</span>
+                            <span className="font-bold text-rose-600 dark:text-rose-400">
+                              +{lateSignOutTimingInfo.minutesLate} minutes late
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        It is past the standard sign-out cutoff ({lateSignOutTimingInfo?.signOutDeadlineFormatted || "07:00 PM"}). You can sign out from campus or remotely, but this requires a reason and must be approved by school administration.
+                      </p>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                          Reason for Late Sign-Out: <span className="text-rose-500">*</span>
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={lateSignOutReason}
+                          onChange={(e) => setLateSignOutReason(e.target.value)}
+                          placeholder="e.g. Extra coaching class, checking test papers, parent meeting, forgot to sign out before leaving..."
+                          className="w-full rounded-xl border border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-white/[0.04] p-2.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-rose-500/50 resize-none"
+                        />
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
+                        <Button
+                          type="button"
+                          disabled={punching || !lateSignOutReason.trim()}
+                          onClick={() => void submitLateSignOut()}
+                          className="w-full sm:flex-1 h-10 rounded-xl font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/25 gap-2 cursor-pointer transition-all active:scale-[0.98]"
+                        >
+                          {punching ? (
+                            <>
+                              <Loader2 className="size-4 animate-spin" />
+                              <span>Submitting Request…</span>
+                            </>
+                          ) : (
+                            <>
+                              <LogOut className="size-4" />
+                              <span>Submit Late Sign-Out for Approval</span>
+                            </>
+                          )}
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={punching}
+                          onClick={() => setLateSignOutModalOpen(false)}
+                          className="w-full sm:w-auto h-10 rounded-xl text-xs font-semibold border-zinc-200 dark:border-white/10"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
                 </motion.div>
               </div>
             )}

@@ -15,7 +15,7 @@ export function DashboardTopBar({ onMenuClick }: { onMenuClick: () => void }) {
       <motion.button
         whileTap={{ scale: 0.9 }}
         type="button"
-        className="flex size-10 items-center justify-center rounded-xl border border-zinc-200/90 bg-white/80 text-foreground md:hidden dark:border-white/10 dark:bg-white/5 shadow-2xs hover:border-zinc-300 dark:hover:border-white/20 transition-colors cursor-pointer"
+        className="flex size-9 items-center justify-center bg-transparent border-0 text-zinc-600 hover:text-zinc-900 md:hidden dark:text-zinc-400 dark:hover:text-zinc-100 transition-colors cursor-pointer"
         aria-label="Open menu"
         onClick={onMenuClick}
       >

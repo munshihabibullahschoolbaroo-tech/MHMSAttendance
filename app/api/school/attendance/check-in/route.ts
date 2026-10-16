@@ -8,6 +8,7 @@ import { haversineMeters } from "@/lib/geo/haversine";
 import { getSchoolConfig } from "@/lib/school/config";
 import { getDayKeyFromDate, getIanaTimeZone } from "@/lib/date/timezone";
 import { isPastLateCutoff } from "@/lib/date/late-check";
+import { invalidateTodayCache } from "@/lib/cache/today-cache";
 
 export const runtime = "nodejs";
 
@@ -69,7 +70,28 @@ export async function POST(req: Request) {
     });
   }
 
-  const lateCheck = isPastLateCutoff(new Date(), config.teacherLateTime || "09:00 AM", timeZone);
+  const lateCheck = isPastLateCutoff(
+    new Date(),
+    config.teacherLateTime || "09:00 AM",
+    timeZone,
+    config.schoolCloseTime || "05:00 PM",
+    config.schoolOpenTime || "08:00 AM"
+  );
+
+  if (lateCheck.isBeforeOpen) {
+    return jsonError(
+      `Check-in is not open yet. Morning check-in begins at ${lateCheck.openWindowStartFormatted} (2 hours before school opening at ${config.schoolOpenTime || "08:00 AM"}). Current time is ${lateCheck.currentFormatted}.`,
+      403
+    );
+  }
+
+  if (lateCheck.isClosed) {
+    return jsonError(
+      `School is closed for today (closed at ${config.schoolCloseTime || "05:00 PM"}). Attendance cannot be recorded for today. Enjoy your evening!`,
+      403
+    );
+  }
+
   const isLate = lateCheck.isLate;
 
   const sessionData = {
@@ -94,8 +116,11 @@ export async function POST(req: Request) {
     status: "present" as const,
     isLate: isLate === true,
     lateArrival: isLate === true,
+    lateReason: lateCheck.reason ?? null,
     lateMinutes: lateCheck.minutesLate,
     cutoffTime: lateCheck.cutoffFormatted,
+    schoolOpenTime: config.schoolOpenTime || "08:00 AM",
+    schoolCloseTime: config.schoolCloseTime || "05:00 PM",
     updatedAt: FieldValue.serverTimestamp(),
   };
 
@@ -122,6 +147,8 @@ export async function POST(req: Request) {
   } catch {
     /* non-critical */
   }
+
+  invalidateTodayCache(auth.decoded.uid);
 
   return NextResponse.json({
     ok: true,

@@ -6,6 +6,7 @@ import { adminDb } from "@/lib/firebase/admin";
 import { jsonError } from "@/lib/api/json-error";
 import { getDayKeyFromDate, getIanaTimeZone } from "@/lib/date/timezone";
 import { createNotification } from "@/lib/notifications/create-notification";
+import { invalidateTodayCache } from "@/lib/cache/today-cache";
 
 export const runtime = "nodejs";
 
@@ -133,6 +134,8 @@ export async function POST(req: Request) {
   } catch (notifErr) {
     console.warn("[emergency-leave] Non-critical notification failed:", notifErr);
   }
+
+  invalidateTodayCache(auth.decoded.uid);
 
   return NextResponse.json({
     ok: true,

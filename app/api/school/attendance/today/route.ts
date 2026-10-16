@@ -7,6 +7,7 @@ import { jsonError } from "@/lib/api/json-error";
 import { FieldValue } from "firebase-admin/firestore";
 import { calculateCasualLeaveQuota } from "@/lib/school/leave-quota";
 import { extractFirstActiveDateKey } from "@/lib/attendance/user-first-active";
+import { todayCache } from "@/lib/cache/today-cache";
 
 export const runtime = "nodejs";
 
@@ -14,8 +15,30 @@ export async function GET(req: Request) {
   const auth = await requireBearerUser(req);
   if (!auth.ok) return auth.response;
 
+  const defaultTz = "Asia/Kolkata";
+  const defaultDateKey = getDayKeyFromDate(new Date(), defaultTz);
+  const cacheKey = `${auth.decoded.uid}:${defaultDateKey}`;
+  const now = Date.now();
+  const cached = todayCache.get(cacheKey);
+  if (cached && now < cached.expiresAt) {
+    return NextResponse.json(cached.data, {
+      headers: { "Cache-Control": "private, no-cache, stale-while-revalidate=15" },
+    });
+  }
+
   const db = adminDb();
-  const userSnap = await db.collection("users").doc(auth.decoded.uid).get();
+
+  // Run all primary reads IN PARALLEL for maximum speed
+  const [userSnap, config, leavesSnap, initialSessionSnap] = await Promise.all([
+    db.collection("users").doc(auth.decoded.uid).get(),
+    getSchoolConfig(db),
+    db.collection("leaveRequests")
+      .where("teacherId", "==", auth.decoded.uid)
+      .where("status", "in", ["approved", "pending"])
+      .get(),
+    db.collection("teacherSessions").doc(`${auth.decoded.uid}_${defaultDateKey}`).get(),
+  ]);
+
   let userData: Record<string, unknown> = {};
   if (userSnap.exists) {
     userData = userSnap.data() ?? {};
@@ -29,78 +52,62 @@ export async function GET(req: Request) {
       position: "teacher",
       workspaceAccessStatus: "approved",
     };
-    try {
-      await db.collection("users").doc(auth.decoded.uid).set(
-        {
-          ...userData,
-          createdAt: new Date(),
-        },
-        { merge: true }
-      );
-    } catch (e) {
-      console.warn("[attendance/today] auto-create userDoc:", e);
-    }
+    db.collection("users").doc(auth.decoded.uid).set(
+      {
+        ...userData,
+        createdAt: new Date(),
+      },
+      { merge: true }
+    ).catch((e) => console.warn("[attendance/today] auto-create userDoc:", e));
   }
-  const timeZone = getIanaTimeZone(userData.timeZone as string | undefined);
-  const dateKey = getDayKeyFromDate(new Date(), timeZone);
-  const config = await getSchoolConfig(db);
 
-  const sessionId = `${auth.decoded.uid}_${dateKey}`;
-  const sessionSnap = await db.collection("teacherSessions").doc(sessionId).get();
+  const timeZone = getIanaTimeZone(userData.timeZone as string | undefined);
+  const dateKey = timeZone === defaultTz ? defaultDateKey : getDayKeyFromDate(new Date(), timeZone);
+
+  // If user has custom timezone that changed dateKey, fetch matching session, otherwise use already loaded sessionSnap
+  let sessionSnap = initialSessionSnap;
+  if (dateKey !== defaultDateKey) {
+    sessionSnap = await db.collection("teacherSessions").doc(`${auth.decoded.uid}_${dateKey}`).get();
+  }
 
   // Check if teacher has an approved or pending leave for today
   let activeLeave: Record<string, unknown> | null = null;
-  const leavesSnap = await db
-    .collection("leaveRequests")
-    .where("teacherId", "==", auth.decoded.uid)
-    .where("status", "in", ["approved", "pending"])
-    .get();
+  const currentYear = dateKey.slice(0, 4); // "YYYY"
+  const allTeacherCasualDates = new Set<string>();
 
   for (const doc of leavesSnap.docs) {
     const l = doc.data();
+    if (l.type === "late_sign_out" || l.isLateSignOut) continue;
     const start = String(l.startDate ?? "");
     const end = String(l.endDate ?? "");
     if (dateKey >= start && dateKey <= end) {
       activeLeave = { id: doc.id, ...l };
-      break;
+    }
+
+    // Accumulate casual leaves directly from leavesSnap in memory (0ms, no second network query!)
+    if (l.type === "casual") {
+      const curr = new Date(start + "T00:00:00Z");
+      const endDt = new Date(end + "T00:00:00Z");
+      if (!isNaN(curr.getTime()) && !isNaN(endDt.getTime()) && curr <= endDt) {
+        while (curr <= endDt) {
+          const yyyy = curr.getUTCFullYear();
+          const mm = String(curr.getUTCMonth() + 1).padStart(2, "0");
+          const dd = String(curr.getUTCDate()).padStart(2, "0");
+          const dStr = `${yyyy}-${mm}-${dd}`;
+          if (dStr.startsWith(currentYear)) {
+            allTeacherCasualDates.add(dStr);
+          }
+          curr.setUTCDate(curr.getUTCDate() + 1);
+        }
+      } else if (start.startsWith(currentYear)) {
+        allTeacherCasualDates.add(start);
+      }
     }
   }
 
-  // Count casual leaves used this calendar year and calculate monthly quota with rollover
-  const currentYear = dateKey.slice(0, 4); // "YYYY"
-  const allCasualLeavesSnap = await db
-    .collection("leaveRequests")
-    .where("teacherId", "==", auth.decoded.uid)
-    .where("type", "==", "casual")
-    .where("status", "in", ["approved", "pending"])
-    .get();
-
-  const allTeacherCasualDates = new Set<string>();
-  allCasualLeavesSnap.forEach((doc) => {
-    const d = doc.data();
-    const startStr = String(d.startDate ?? "");
-    const endStr = String(d.endDate ?? startStr);
-    const curr = new Date(startStr + "T00:00:00Z");
-    const end = new Date(endStr + "T00:00:00Z");
-    if (!isNaN(curr.getTime()) && !isNaN(end.getTime()) && curr <= end) {
-      while (curr <= end) {
-        const yyyy = curr.getUTCFullYear();
-        const mm = String(curr.getUTCMonth() + 1).padStart(2, "0");
-        const dd = String(curr.getUTCDate()).padStart(2, "0");
-        const dateStr = `${yyyy}-${mm}-${dd}`;
-        if (dateStr.startsWith(currentYear)) {
-          allTeacherCasualDates.add(dateStr);
-        }
-        curr.setUTCDate(curr.getUTCDate() + 1);
-      }
-    } else if (startStr.startsWith(currentYear)) {
-      allTeacherCasualDates.add(startStr);
-    }
-  });
-
   const firstActiveDateKey = extractFirstActiveDateKey(userData, sessionSnap.exists ? dateKey : null, timeZone);
 
-  // If user doc doesn't have firstLoginAt recorded yet, record it now
+  // If user doc doesn't have firstLoginAt recorded yet, record it asynchronously without blocking
   if (!userData.firstLoginAt && !userData.createdAt) {
     db.collection("users")
       .doc(auth.decoded.uid)
@@ -110,7 +117,7 @@ export async function GET(req: Request) {
 
   const casualQuota = calculateCasualLeaveQuota(dateKey, allTeacherCasualDates, firstActiveDateKey);
 
-  return NextResponse.json({
+  const payload = {
     date: dateKey,
     config: {
       name: config.name,
@@ -118,7 +125,11 @@ export async function GET(req: Request) {
       latitude: config.latitude,
       longitude: config.longitude,
       radiusMeters: config.radiusMeters,
+      schoolOpenTime: config.schoolOpenTime || "08:00 AM",
       teacherLateTime: config.teacherLateTime || "09:00 AM",
+      schoolCloseTime: config.schoolCloseTime || "05:00 PM",
+      schoolSignOutDeadline: config.schoolSignOutDeadline || "07:00 PM",
+      signOutGraceHours: config.signOutGraceHours ?? 2,
     },
     teacher: {
       name: userData.name ?? auth.decoded.email?.split("@")[0] ?? "Teacher",
@@ -135,30 +146,30 @@ export async function GET(req: Request) {
       carriedForwardCasualLeaves: casualQuota.carriedForward,
       remainingCasualLeaves: casualQuota.remainingCasualLeaves,
     },
-    session: sessionSnap.exists
-      ? (() => {
-          const s = sessionSnap.data() ?? {};
-          return {
-            ...s,
-            checkInTime: s.checkInTime?.toDate
-              ? s.checkInTime.toDate().toISOString()
-              : s.checkInTime?.seconds
-              ? new Date(s.checkInTime.seconds * 1000).toISOString()
-              : s.checkInTime?._seconds
-              ? new Date(s.checkInTime._seconds * 1000).toISOString()
-              : s.checkInTime,
-            checkOutTime: s.checkOutTime?.toDate
-              ? s.checkOutTime.toDate().toISOString()
-              : s.checkOutTime?.seconds
-              ? new Date(s.checkOutTime.seconds * 1000).toISOString()
-              : s.checkOutTime?._seconds
-              ? new Date(s.checkOutTime._seconds * 1000).toISOString()
-              : s.checkOutTime,
-          };
-        })()
-      : null,
+    session: (() => {
+      if (!sessionSnap.exists) return null;
+      const s = sessionSnap.data() ?? {};
+      const formatTime = (t: any) => {
+        if (!t) return t;
+        if (typeof t.toDate === "function") return t.toDate().toISOString();
+        if (typeof t.seconds === "number") return new Date(t.seconds * 1000).toISOString();
+        if (typeof t._seconds === "number") return new Date(t._seconds * 1000).toISOString();
+        return t;
+      };
+      return {
+        ...s,
+        checkInTime: formatTime(s.checkInTime),
+        checkOutTime: formatTime(s.checkOutTime),
+      };
+    })(),
     isCheckedIn: sessionSnap.exists && !!sessionSnap.get("checkInTime"),
     isCheckedOut: sessionSnap.exists && !!sessionSnap.get("checkOutTime"),
     leave: activeLeave,
+  };
+
+  todayCache.set(cacheKey, { data: payload, expiresAt: now + 15_000 });
+
+  return NextResponse.json(payload, {
+    headers: { "Cache-Control": "private, no-cache, stale-while-revalidate=15" },
   });
 }

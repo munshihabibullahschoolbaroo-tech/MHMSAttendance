@@ -28,7 +28,12 @@ import { Input, formFieldLabelClass } from "@/components/ui/input";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { SchoolCampusMap } from "@/components/client/map/school-campus-map";
 import { SchoolConfig, DEFAULT_SCHOOL_CONFIG } from "@/lib/school/config";
-import { STANDARD_AM_CUTOFF_OPTIONS } from "@/lib/date/late-check";
+import {
+  STANDARD_AM_OPEN_OPTIONS,
+  STANDARD_AM_CUTOFF_OPTIONS,
+  STANDARD_PM_CLOSE_OPTIONS,
+  STANDARD_PM_SIGNOUT_OPTIONS,
+} from "@/lib/date/late-check";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
@@ -561,8 +566,10 @@ export function AdminOnboardingSettings({
       {/* Geofence & Campus Location Form */}
       {currentTab === "campus" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-          <Card className="border-zinc-200 shadow-sm dark:border-white/10">
-          <CardHeader>
+          {/* LEFT COLUMN: Campus Geofence Parameters + Live Map */}
+          <div className="space-y-6">
+            <Card className="border-zinc-200 shadow-sm dark:border-white/10">
+              <CardHeader>
             <CardTitle className="text-base font-bold flex items-center gap-2">
               <MapPin className="h-4 w-4 text-blue-600" />
               Campus Geofence Parameters
@@ -647,83 +654,294 @@ export function AdminOnboardingSettings({
                 If teachers face GPS accuracy issues due to Kargil terrain/weather, increase the radius.
               </p>
             </label>
-
-            {/* Teacher Late Arrival Timing (Strictly AM) */}
-            <div className="pt-4 border-t border-zinc-200/80 dark:border-white/10 space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className={cn(formFieldLabelClass, "flex items-center gap-1.5")}>
-                  <Clock className="size-3.5 text-amber-500" />
-                  Teacher Late Arrival Cutoff (AM Only)
-                </span>
-                <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
-                  Cutoff: {config.teacherLateTime || "09:00 AM"}
-                </span>
-              </div>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                School morning arrival time is strictly AM. Any teacher checking in after this time will see the <strong>&ldquo;You are late, sir!&rdquo;</strong> prompt card and be logged as Late Arrival.
-              </p>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
-                <div className="flex-1">
-                  <AppSelect
-                    value={
-                      STANDARD_AM_CUTOFF_OPTIONS.includes(config.teacherLateTime as any)
-                        ? (config.teacherLateTime as string)
-                        : "custom"
-                    }
-                    onChange={(val) => {
-                      if (val !== "custom") {
-                        setConfig((prev) => ({ ...prev, teacherLateTime: val }));
-                      }
-                    }}
-                    options={[
-                      ...STANDARD_AM_CUTOFF_OPTIONS.map((time) => ({
-                        value: time,
-                        label: `${time} ${time === "09:00 AM" ? "(Standard Default)" : ""}`,
-                      })),
-                      { value: "custom", label: "Custom AM Time…" },
-                    ]}
-                  />
-                </div>
-
-                {/* Custom AM Input */}
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <Input
-                    type="text"
-                    value={config.teacherLateTime || "09:00 AM"}
-                    onChange={(e) => {
-                      let val = e.target.value.toUpperCase();
-                      // Enforce AM only: remove any PM, only allow numbers, colon and AM
-                      val = val.replace(/PM/g, "AM");
-                      if (!val.includes("AM") && val.trim().length >= 4) {
-                        val = val.replace(/\s*[A-Z]*$/, "").trim() + " AM";
-                      }
-                      setConfig((prev) => ({ ...prev, teacherLateTime: val }));
-                    }}
-                    placeholder="09:00 AM"
-                    className="w-28 text-center font-bold text-xs"
-                  />
-                  <span className="text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 dark:bg-amber-500/15 px-2.5 py-1.5 rounded-lg border border-amber-500/20">
-                    AM
-                  </span>
-                </div>
-              </div>
-            </div>
           </CardContent>
         </Card>
 
-        {/* Live Geofence Preview Map */}
-        <div className="space-y-4">
-          <SchoolCampusMap
-            schoolLat={config.latitude}
-            schoolLng={config.longitude}
-            radiusMeters={config.radiusMeters}
-            schoolName={config.name}
-            campusName={config.campusName}
-          />
-        </div>
+        {/* Live Geofence Preview Map (placed directly beneath the Campus Geofence Parameters) */}
+        <SchoolCampusMap
+          schoolLat={config.latitude}
+          schoolLng={config.longitude}
+          radiusMeters={config.radiusMeters}
+          schoolName={config.name}
+          campusName={config.campusName}
+        />
       </div>
-    )}
+
+      {/* RIGHT COLUMN: School Working Schedule & Late Timings */}
+      <Card className="border-zinc-200 shadow-sm dark:border-white/10">
+        <CardHeader>
+          <CardTitle className="text-base font-bold flex items-center gap-2">
+            <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            School Working Schedule & Late Timings
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Configure school opening, arrival cutoff, and closing hours. Teachers checking in past cutoff or after 5:00 PM closing will see the late arrival card. At 12:00 AM midnight, the new day starts fresh and shows normally.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+              {/* 1. School Opening Time (Morning) */}
+              <div className="space-y-2 p-3 rounded-2xl bg-zinc-50 dark:bg-white/[0.03] border border-zinc-200/70 dark:border-white/10">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                    <Clock className="size-3.5 text-blue-500" />
+                    School Opening Time (Morning)
+                  </span>
+                  <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-full border border-blue-500/20">
+                    Opens: {config.schoolOpenTime || "08:00 AM"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Campus morning opening time for faculty arrival and morning assemblies (8:00 AM standard).
+                </p>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                  <div className="flex-1">
+                    <AppSelect
+                      value={
+                        STANDARD_AM_OPEN_OPTIONS.includes(config.schoolOpenTime as any)
+                          ? (config.schoolOpenTime as string)
+                          : "custom"
+                      }
+                      onChange={(val) => {
+                        if (val !== "custom") {
+                          setConfig((prev) => ({ ...prev, schoolOpenTime: val }));
+                        }
+                      }}
+                      options={[
+                        ...STANDARD_AM_OPEN_OPTIONS.map((time) => ({
+                          value: time,
+                          label: `${time} ${time === "08:00 AM" ? "(Standard Default)" : ""}`,
+                        })),
+                        { value: "custom", label: "Custom AM Time…" },
+                      ]}
+                      title="Select School Opening Time"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Input
+                      type="text"
+                      value={config.schoolOpenTime || "08:00 AM"}
+                      onChange={(e) => {
+                        let val = e.target.value.toUpperCase();
+                        val = val.replace(/PM/g, "AM");
+                        if (!val.includes("AM") && val.trim().length >= 4) {
+                          val = val.replace(/\s*[A-Z]*$/, "").trim() + " AM";
+                        }
+                        setConfig((prev) => ({ ...prev, schoolOpenTime: val }));
+                      }}
+                      placeholder="08:00 AM"
+                      className="w-28 text-center font-bold text-xs"
+                    />
+                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2.5 py-1.5 rounded-lg border border-blue-500/20">
+                      AM
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Teacher Late Arrival Cutoff (Morning) */}
+              <div className="space-y-2 p-3 rounded-2xl bg-amber-50/50 dark:bg-amber-950/15 border border-amber-500/30">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                    <Clock className="size-3.5 text-amber-500" />
+                    Teacher Late Arrival Cutoff (Morning Cutoff)
+                  </span>
+                  <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                    Cutoff: {config.teacherLateTime || "09:00 AM"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  School morning arrival cutoff (9:00 AM standard). Teachers checking in after this time will see the <strong>&ldquo;You are late, sir!&rdquo;</strong> prompt card and be logged as Late Arrival.
+                </p>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                  <div className="flex-1">
+                    <AppSelect
+                      value={
+                        STANDARD_AM_CUTOFF_OPTIONS.includes(config.teacherLateTime as any)
+                          ? (config.teacherLateTime as string)
+                          : "custom"
+                      }
+                      onChange={(val) => {
+                        if (val !== "custom") {
+                          setConfig((prev) => ({ ...prev, teacherLateTime: val }));
+                        }
+                      }}
+                      options={[
+                        ...STANDARD_AM_CUTOFF_OPTIONS.map((time) => ({
+                          value: time,
+                          label: `${time} ${time === "09:00 AM" ? "(Standard Default)" : ""}`,
+                        })),
+                        { value: "custom", label: "Custom AM Time…" },
+                      ]}
+                      title="Select Late Arrival Cutoff"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Input
+                      type="text"
+                      value={config.teacherLateTime || "09:00 AM"}
+                      onChange={(e) => {
+                        let val = e.target.value.toUpperCase();
+                        val = val.replace(/PM/g, "AM");
+                        if (!val.includes("AM") && val.trim().length >= 4) {
+                          val = val.replace(/\s*[A-Z]*$/, "").trim() + " AM";
+                        }
+                        setConfig((prev) => ({ ...prev, teacherLateTime: val }));
+                      }}
+                      placeholder="09:00 AM"
+                      className="w-28 text-center font-bold text-xs"
+                    />
+                    <span className="text-xs font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 dark:bg-amber-500/15 px-2.5 py-1.5 rounded-lg border border-amber-500/20">
+                      AM
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. School Closing Time (Evening) */}
+              <div className="space-y-2 p-3 rounded-2xl bg-zinc-50 dark:bg-white/[0.03] border border-zinc-200/70 dark:border-white/10">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                    <Clock className="size-3.5 text-purple-500" />
+                    School Closing Time (Evening)
+                  </span>
+                  <span className="text-[11px] font-bold text-purple-600 dark:text-purple-400 bg-purple-500/10 px-2.5 py-0.5 rounded-full border border-purple-500/20">
+                    Closes: {config.schoolCloseTime || "05:00 PM"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Campus evening closing time (5:00 PM standard). Any check-in after 5:00 PM is marked late. When midnight (12:00 AM) passes, the system treats it as the new day and shows normally.
+                </p>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                  <div className="flex-1">
+                    <AppSelect
+                      value={
+                        STANDARD_PM_CLOSE_OPTIONS.includes(config.schoolCloseTime as any)
+                          ? (config.schoolCloseTime as string)
+                          : "custom"
+                      }
+                      onChange={(val) => {
+                        if (val !== "custom") {
+                          setConfig((prev) => ({ ...prev, schoolCloseTime: val }));
+                        }
+                      }}
+                      options={[
+                        ...STANDARD_PM_CLOSE_OPTIONS.map((time) => ({
+                          value: time,
+                          label: `${time} ${time === "05:00 PM" ? "(Standard Default)" : ""}`,
+                        })),
+                        { value: "custom", label: "Custom PM Time…" },
+                      ]}
+                      title="Select School Closing Time"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Input
+                      type="text"
+                      value={config.schoolCloseTime || "05:00 PM"}
+                      onChange={(e) => {
+                        let val = e.target.value.toUpperCase();
+                        val = val.replace(/AM/g, "PM");
+                        if (!val.includes("PM") && val.trim().length >= 4) {
+                          val = val.replace(/\s*[A-Z]*$/, "").trim() + " PM";
+                        }
+                        setConfig((prev) => ({ ...prev, schoolCloseTime: val }));
+                      }}
+                      placeholder="05:00 PM"
+                      className="w-28 text-center font-bold text-xs"
+                    />
+                    <span className="text-xs font-bold text-purple-600 dark:text-purple-400 bg-purple-500/10 dark:bg-purple-500/15 px-2.5 py-1.5 rounded-lg border border-purple-500/20">
+                      PM
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Evening Sign-Out Deadline & Grace Period */}
+              <div className="space-y-3 p-3 rounded-2xl bg-rose-50/60 dark:bg-rose-950/20 border border-rose-500/30">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-rose-900 dark:text-rose-200 flex items-center gap-1.5">
+                    <Clock className="size-3.5 text-rose-500" />
+                    School Sign-Out Timing & Grace Period
+                  </span>
+                  <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 px-2.5 py-0.5 rounded-full border border-rose-500/20">
+                    On-Time Until: {config.schoolSignOutDeadline || "07:00 PM"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Teachers signing out before or by {config.schoolSignOutDeadline || "07:00 PM"} are signed out on time. Signing out after {config.schoolSignOutDeadline || "07:00 PM"} (late sign-out) requires a reason and admin approval (can be done remotely). At 12:00 AM midnight (next day), any punch without sign-out is automatically marked absent.
+                </p>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                  <div className="flex-1">
+                    <AppSelect
+                      value={
+                        STANDARD_PM_SIGNOUT_OPTIONS.includes(config.schoolSignOutDeadline as any)
+                          ? (config.schoolSignOutDeadline as string)
+                          : "custom"
+                      }
+                      onChange={(val) => {
+                        if (val !== "custom") {
+                          setConfig((prev) => ({ ...prev, schoolSignOutDeadline: val }));
+                        }
+                      }}
+                      options={[
+                        ...STANDARD_PM_SIGNOUT_OPTIONS.map((time) => ({
+                          value: time,
+                          label: `${time} ${time === "07:00 PM" ? "(Standard Default)" : ""}`,
+                        })),
+                        { value: "custom", label: "Custom PM Time…" },
+                      ]}
+                      title="Select Sign-Out Deadline"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Input
+                      type="text"
+                      value={config.schoolSignOutDeadline || "07:00 PM"}
+                      onChange={(e) => {
+                        let val = e.target.value.toUpperCase();
+                        val = val.replace(/AM/g, "PM");
+                        if (!val.includes("PM") && val.trim().length >= 4) {
+                          val = val.replace(/\s*[A-Z]*$/, "").trim() + " PM";
+                        }
+                        setConfig((prev) => ({ ...prev, schoolSignOutDeadline: val }));
+                      }}
+                      placeholder="07:00 PM"
+                      className="w-28 text-center font-bold text-xs"
+                    />
+                    <span className="text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 dark:bg-rose-500/15 px-2.5 py-1.5 rounded-lg border border-rose-500/20">
+                      PM
+                    </span>
+                  </div>
+                </div>
+
+                {/* Grace period indicator / explanation */}
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-rose-200/50 dark:border-rose-900/30">
+                  <span className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                    Late sign-out grace period: <strong>{config.signOutGraceHours ?? 2} hours</strong> after closing ({config.schoolCloseTime || "05:00 PM"} → {config.schoolSignOutDeadline || "07:00 PM"})
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-zinc-500">Grace Hours:</span>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="12"
+                      value={config.signOutGraceHours ?? 2}
+                      onChange={(e) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          signOutGraceHours: Math.max(0, parseInt(e.target.value, 10) || 0),
+                        }))
+                      }
+                      className="w-16 h-7 text-center font-bold text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+        </CardContent>
+      </Card>
+    </div>
+  )}
 
       {/* Advanced Per-Class Sections Configuration */}
       {currentTab === "sections" && (
