@@ -1112,23 +1112,26 @@ export function TeacherStudentsManager() {
             <motion.div
               whileTap={{ scale: 0.98 }}
               onClick={() => setMobileRollCallOpen(true)}
-              className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 flex items-center justify-between shadow-sm hover:border-zinc-300 dark:hover:border-white/20 transition-all cursor-pointer select-none active:bg-zinc-50 dark:active:bg-white/[0.06]"
+              className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 flex items-center justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-white/20 transition-all cursor-pointer select-none active:bg-zinc-50 dark:active:bg-white/[0.06]"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-600 dark:text-blue-400">
                   <Users className="size-5" />
                 </div>
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100 truncate">
                     Daily Student Roll Call
                   </h3>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
                     {selectedClass} ({selectedSection}) • {selectedDate}
                   </p>
                 </div>
               </div>
-              <div className="h-8 rounded-full bg-zinc-900 text-white dark:bg-white/10 dark:text-white text-xs font-semibold px-4 flex items-center justify-center pointer-events-none">
-                Roll Call &gt;
+              <div className="shrink-0 pointer-events-none">
+                <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-zinc-900 text-white dark:bg-white/10 dark:text-white text-xs font-semibold whitespace-nowrap">
+                  <span>Roll Call</span>
+                  <span className="font-bold">&gt;</span>
+                </span>
               </div>
             </motion.div>
 
@@ -1136,23 +1139,26 @@ export function TeacherStudentsManager() {
             <motion.div
               whileTap={{ scale: 0.98 }}
               onClick={() => setMobileCalendarOpen(true)}
-              className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 flex items-center justify-between shadow-sm hover:border-zinc-300 dark:hover:border-white/20 transition-all cursor-pointer select-none active:bg-zinc-50 dark:active:bg-white/[0.06]"
+              className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 flex items-center justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-white/20 transition-all cursor-pointer select-none active:bg-zinc-50 dark:active:bg-white/[0.06]"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
                   <CalendarIcon className="size-5" />
                 </div>
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100 truncate">
                     Monthly Class Calendar
                   </h3>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
                     {monthLabel} • Attendance overview
                   </p>
                 </div>
               </div>
-              <div className="h-8 rounded-full bg-zinc-900 text-white dark:bg-white/10 dark:text-white text-xs font-semibold px-4 flex items-center justify-center pointer-events-none">
-                Calendar &gt;
+              <div className="shrink-0 pointer-events-none">
+                <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-zinc-900 text-white dark:bg-white/10 dark:text-white text-xs font-semibold whitespace-nowrap">
+                  <span>Calendar</span>
+                  <span className="font-bold">&gt;</span>
+                </span>
               </div>
             </motion.div>
 
@@ -1160,23 +1166,26 @@ export function TeacherStudentsManager() {
             <motion.div
               whileTap={{ scale: 0.98 }}
               onClick={() => setMobileToolsOpen(true)}
-              className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 flex items-center justify-between shadow-sm hover:border-zinc-300 dark:hover:border-white/20 transition-all cursor-pointer select-none active:bg-zinc-50 dark:active:bg-white/[0.06]"
+              className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 flex items-center justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-white/20 transition-all cursor-pointer select-none active:bg-zinc-50 dark:active:bg-white/[0.06]"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
                   <SlidersHorizontal className="size-5" />
                 </div>
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100 truncate">
                     Class Tools &amp; Settings
                   </h3>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
                     Switch class, substitute, PDF download
                   </p>
                 </div>
               </div>
-              <div className="h-8 rounded-full bg-zinc-900 text-white dark:bg-white/10 dark:text-white text-xs font-semibold px-4 flex items-center justify-center pointer-events-none">
-                Tools &gt;
+              <div className="shrink-0 pointer-events-none">
+                <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-zinc-900 text-white dark:bg-white/10 dark:text-white text-xs font-semibold whitespace-nowrap">
+                  <span>Tools</span>
+                  <span className="font-bold">&gt;</span>
+                </span>
               </div>
             </motion.div>
 
@@ -1756,21 +1765,25 @@ export function TeacherStudentsManager() {
         createPortal(
           <AnimatePresence>
             {isSwitchModalOpen && (
-              <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+              <div className="fixed inset-0 z-[10000] flex flex-col justify-end sm:justify-center sm:items-center p-0 sm:p-4">
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
                   className="fixed inset-0 bg-black/70 backdrop-blur-sm"
                   onClick={() => !submittingSwitch && setIsSwitchModalOpen(false)}
                 />
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                  className="relative z-10 w-full max-w-lg rounded-3xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-zinc-950 p-6 shadow-2xl space-y-5"
+                  initial={{ y: "100%", opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: "100%", opacity: 0 }}
+                  transition={{ type: "spring", damping: 28, stiffness: 280 }}
+                  className="relative z-10 w-full sm:max-w-lg max-h-[90dvh] flex flex-col rounded-t-[28px] sm:rounded-3xl border-t sm:border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-[#1c1c1e] text-zinc-900 dark:text-white p-5 sm:p-6 shadow-2xl overflow-y-auto overscroll-contain pb-8 sm:pb-6 space-y-4"
                 >
+                  {/* Top drag handle for mobile */}
+                  <div className="mx-auto -mt-1 mb-1 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700 sm:hidden shrink-0" />
+
                   {/* Top Right Close Button */}
                   <button
                     type="button"
@@ -1858,7 +1871,7 @@ export function TeacherStudentsManager() {
                         required
                         rows={3}
                         placeholder="e.g. Primary teacher is on leave today, need to take roll call for Class 2"
-                        className="w-full rounded-xl border border-zinc-300 dark:border-white/15 bg-white dark:bg-zinc-900 p-3 text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 outline-none resize-none"
+                        className="w-full rounded-xl border border-zinc-300 dark:border-white/15 bg-white dark:bg-zinc-900 p-3 text-base sm:text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 outline-none resize-none"
                       />
                     </div>
 
@@ -1907,21 +1920,25 @@ export function TeacherStudentsManager() {
         createPortal(
           <AnimatePresence>
             {isAssignModalOpen && (
-              <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+              <div className="fixed inset-0 z-[10000] flex flex-col justify-end sm:justify-center sm:items-center p-0 sm:p-4">
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
                   className="fixed inset-0 bg-black/70 backdrop-blur-sm"
                   onClick={() => !submittingAssign && setIsAssignModalOpen(false)}
                 />
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                  className="relative z-10 w-full max-w-lg rounded-3xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-zinc-950 p-6 shadow-2xl space-y-5"
+                  initial={{ y: "100%", opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  exit={{ y: "100%", opacity: 0 }}
+                  transition={{ type: "spring", damping: 28, stiffness: 280 }}
+                  className="relative z-10 w-full sm:max-w-lg max-h-[90dvh] flex flex-col rounded-t-[28px] sm:rounded-3xl border-t sm:border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-[#1c1c1e] text-zinc-900 dark:text-white p-5 sm:p-6 shadow-2xl overflow-y-auto overscroll-contain pb-8 sm:pb-6 space-y-4"
                 >
+                  {/* Top drag handle for mobile */}
+                  <div className="mx-auto -mt-1 mb-1 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700 sm:hidden shrink-0" />
+
                   {/* Top Right Close Button */}
                   <button
                     type="button"
@@ -2026,7 +2043,7 @@ export function TeacherStudentsManager() {
                         onChange={(e) => setAssignReason(e.target.value)}
                         rows={2}
                         placeholder="e.g. Appointed as Class Incharge for the new session"
-                        className="w-full rounded-xl border border-zinc-300 dark:border-white/15 bg-white dark:bg-zinc-900 p-3 text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 outline-none resize-none"
+                        className="w-full rounded-xl border border-zinc-300 dark:border-white/15 bg-white dark:bg-zinc-900 p-3 text-base sm:text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 outline-none resize-none"
                       />
                     </div>
 

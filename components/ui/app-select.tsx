@@ -80,7 +80,7 @@ export function AppSelect({
   React.useEffect(() => {
     setMounted(true);
     const checkMobile = () => {
-      setIsMobile(window.innerWidth < 640);
+      setIsMobile(window.innerWidth < 768);
     };
     checkMobile();
     window.addEventListener("resize", checkMobile);
@@ -149,17 +149,16 @@ export function AppSelect({
     });
   }, [normalizedOptions, query]);
 
-  // Reset query on close
+  // Reset query on close; focus search on desktop/tablets
   React.useEffect(() => {
     if (!isOpen) {
       setQuery("");
-    } else {
-      // Focus search if opened with preventScroll so it never scrolls parent page/card
+    } else if (!isMobile) {
       setTimeout(() => {
         searchInputRef.current?.focus({ preventScroll: true });
       }, 50);
     }
-  }, [isOpen]);
+  }, [isOpen, isMobile]);
 
   // Auto-scroll to selected option when opened
   React.useEffect(() => {
@@ -174,16 +173,19 @@ export function AppSelect({
     }
   }, [isOpen, isMobile]);
 
-  // Mobile list ref & auto-scroll
+  // Mobile list ref & safe inner-list auto-scroll (never scrolls window)
   const mobileListRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
-    if (isOpen && isMobile) {
+    if (isOpen && isMobile && mobileListRef.current) {
       const timer = setTimeout(() => {
-        const selectedEl = mobileListRef.current?.querySelector<HTMLElement>('[data-selected="true"]');
+        const list = mobileListRef.current;
+        if (!list) return;
+        const selectedEl = list.querySelector<HTMLElement>('[data-selected="true"]');
         if (selectedEl) {
-          selectedEl.scrollIntoView({ block: "nearest" });
+          const top = selectedEl.offsetTop - list.offsetTop;
+          list.scrollTo({ top: Math.max(0, top - 20), behavior: "smooth" });
         }
-      }, 40);
+      }, 50);
       return () => clearTimeout(timer);
     }
   }, [isOpen, isMobile]);
@@ -192,39 +194,9 @@ export function AppSelect({
   React.useEffect(() => {
     if (!isOpen || !isMobile) return;
     const originalOverflow = document.body.style.overflow;
-    const originalTouchAction = document.body.style.touchAction;
     document.body.style.overflow = "hidden";
-    document.body.style.touchAction = "none";
     return () => {
       document.body.style.overflow = originalOverflow;
-      document.body.style.touchAction = originalTouchAction;
-    };
-  }, [isOpen, isMobile]);
-
-  // Track visual viewport on mobile so virtual keyboard does not scroll the bottom sheet card
-  const [visualViewportState, setVisualViewportState] = React.useState<{
-    height: number;
-    offsetTop: number;
-  } | null>(null);
-
-  React.useEffect(() => {
-    if (!isOpen || !isMobile || typeof window === "undefined") return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    const updateViewport = () => {
-      setVisualViewportState({
-        height: vv.height,
-        offsetTop: vv.offsetTop,
-      });
-    };
-
-    updateViewport();
-    vv.addEventListener("resize", updateViewport);
-    vv.addEventListener("scroll", updateViewport);
-    return () => {
-      vv.removeEventListener("resize", updateViewport);
-      vv.removeEventListener("scroll", updateViewport);
     };
   }, [isOpen, isMobile]);
 
@@ -395,33 +367,20 @@ export function AppSelect({
           document.body
         )}
 
-      {/* MOBILE BOTTOM SHEET DRAWER (screen width < 640px) */}
+      {/* MOBILE BOTTOM SHEET DRAWER (screen width < 768px) */}
       {isMobile &&
         mounted &&
         createPortal(
           <AnimatePresence>
             {isOpen && (
-              <div
-                style={
-                  visualViewportState
-                    ? {
-                        position: "fixed",
-                        top: `${visualViewportState.offsetTop}px`,
-                        height: `${visualViewportState.height}px`,
-                        left: 0,
-                        right: 0,
-                      }
-                    : undefined
-                }
-                className="fixed inset-0 z-[100500] flex flex-col justify-end overflow-hidden overscroll-none"
-              >
+              <div className="fixed inset-0 z-[100500] flex flex-col justify-end overflow-hidden overscroll-none">
                 {/* Backdrop */}
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
                   onClick={() => setIsOpen(false)}
-                  onTouchMove={(e) => e.preventDefault()}
                   className="fixed inset-0 bg-black/70 backdrop-blur-xs"
                 />
 
@@ -430,25 +389,19 @@ export function AppSelect({
                   initial={{ y: "100%" }}
                   animate={{ y: 0 }}
                   exit={{ y: "100%" }}
-                  transition={{ type: "spring", damping: 28, stiffness: 320 }}
-                  className="relative z-10 w-full rounded-t-3xl border-t border-zinc-200 bg-white p-5 pb-6 shadow-2xl dark:border-white/10 dark:bg-zinc-950 max-h-[85vh] max-h-[85dvh] flex flex-col overflow-hidden"
+                  transition={{ type: "spring", damping: 28, stiffness: 280 }}
+                  className="relative z-10 w-full rounded-t-[28px] border-t border-zinc-200 bg-white p-5 pb-8 shadow-2xl dark:border-white/10 dark:bg-zinc-950 max-h-[85dvh] flex flex-col overflow-hidden"
                 >
                   {/* Drag Handle */}
-                  <div
-                    onTouchMove={(e) => e.preventDefault()}
-                    className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700 shrink-0"
-                  />
+                  <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700 shrink-0" />
 
                   {/* Header */}
-                  <div
-                    onTouchMove={(e) => e.preventDefault()}
-                    className="mb-3 flex items-center justify-between border-b border-zinc-100 pb-3 dark:border-white/10 shrink-0"
-                  >
+                  <div className="mb-3 flex items-center justify-between border-b border-zinc-100 pb-3 dark:border-white/10 shrink-0">
                     <h3 className="font-extrabold text-base text-zinc-900 dark:text-zinc-100">{resolvedTitle}</h3>
                     <button
                       type="button"
                       onClick={() => setIsOpen(false)}
-                      className="flex size-7 items-center justify-center rounded-full bg-zinc-100 text-zinc-500 dark:bg-white/10 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-white/20"
+                      className="flex size-7 items-center justify-center rounded-full bg-zinc-100 text-zinc-500 dark:bg-white/10 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-white/20 cursor-pointer"
                     >
                       <X className="size-4" />
                     </button>
@@ -456,10 +409,7 @@ export function AppSelect({
 
                   {/* Mobile Search Bar if searchable */}
                   {isAutoSearchable && (
-                    <div
-                      onTouchMove={(e) => e.preventDefault()}
-                      className="mb-3 shrink-0"
-                    >
+                    <div className="mb-3 shrink-0">
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-zinc-400" />
                         <input

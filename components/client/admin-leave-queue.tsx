@@ -24,6 +24,7 @@ import { getFirebaseAuth } from "@/lib/firebase/client";
 import { toast } from "sonner";
 import { cn, resolveDocumentViewUrl } from "@/lib/utils";
 import { DangerConfirmModal } from "@/components/client/danger-confirm-modal";
+import { MediaPreviewModal } from "@/components/ui/media-preview-modal";
 
 type LeaveRequest = {
   id: string;
@@ -63,6 +64,7 @@ export function AdminLeaveQueue() {
     teacherName: string;
   } | null>(null);
   const [rejectNotes, setRejectNotes] = React.useState("");
+  const [previewTarget, setPreviewTarget] = React.useState<{ url: string; title: string } | null>(null);
 
   const fetchLeaves = React.useCallback(async () => {
     try {
@@ -459,17 +461,20 @@ export function AdminLeaveQueue() {
                         return (
                           <div className="flex flex-wrap items-center gap-1.5">
                             {docs.map((url, idx) => (
-                              <a
+                              <button
                                 key={url + idx}
-                                href={resolveDocumentViewUrl(url)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-950/20 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors shadow-xs"
+                                type="button"
+                                onClick={() =>
+                                  setPreviewTarget({
+                                    url: resolveDocumentViewUrl(url),
+                                    title: docs.length > 1 ? `${leave.teacherName} - Medical Doc ${idx + 1}` : `${leave.teacherName} - Medical Doc`,
+                                  })
+                                }
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-50/70 dark:bg-emerald-950/20 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors shadow-xs cursor-pointer"
                               >
                                 <FileText className="h-3.5 w-3.5" />
                                 <span>{docs.length > 1 ? `Medical Doc ${idx + 1}` : "View Medical Doc"}</span>
-                                <ExternalLink className="h-3 w-3 opacity-70" />
-                              </a>
+                              </button>
                             ))}
                           </div>
                         );
@@ -579,6 +584,14 @@ export function AdminLeaveQueue() {
         cancelText="Cancel"
         loading={bulkBusy}
         variant={bulkActionTarget?.action === "approve" ? "warning" : "danger"}
+      />
+
+      {/* IN-WINDOW MEDIA PREVIEW MODAL */}
+      <MediaPreviewModal
+        isOpen={Boolean(previewTarget)}
+        onClose={() => setPreviewTarget(null)}
+        url={previewTarget?.url ?? null}
+        title={previewTarget?.title}
       />
     </div>
   );

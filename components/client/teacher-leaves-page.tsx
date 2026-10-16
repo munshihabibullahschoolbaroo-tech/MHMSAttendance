@@ -35,6 +35,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Separator } from "@/components/ui/separator";
 import { calculateCasualLeaveQuota } from "@/lib/school/leave-quota";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
+import { MediaPreviewModal } from "@/components/ui/media-preview-modal";
 
 type LeaveRecord = {
   id: string;
@@ -61,10 +62,16 @@ export function TeacherLeavesPage() {
   const [leaves, setLeaves] = React.useState<LeaveRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [openModal, setOpenModal] = React.useState(false);
+  const [openHistoryModal, setOpenHistoryModal] = React.useState(false);
   const [mounted, setMounted] = React.useState(false);
+  const [isMobile, setIsMobile] = React.useState(false);
 
   React.useEffect(() => {
     setMounted(true);
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
   }, []);
 
   // Form state
@@ -75,12 +82,14 @@ export function TeacherLeavesPage() {
   const [documents, setDocuments] = React.useState<AttachedDoc[]>([]);
   const [uploadingDoc, setUploadingDoc] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const [previewTarget, setPreviewTarget] = React.useState<{ url: string; title: string } | null>(null);
 
   // Close modal/drawer on Escape key
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !submitting) {
         setOpenModal(false);
+        setOpenHistoryModal(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -346,7 +355,7 @@ export function TeacherLeavesPage() {
           </span>
         </div>
 
-        {/* Action Card (Full Card Clickable with Framer Motion) */}
+        {/* 1. Action Card: Apply for Leave */}
         <motion.div
           role="button"
           tabIndex={0}
@@ -358,141 +367,199 @@ export function TeacherLeavesPage() {
               setOpenModal(true);
             }
           }}
-          className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 flex items-center justify-between shadow-sm cursor-pointer select-none hover:border-zinc-300 dark:hover:border-white/20 transition-all active:bg-zinc-50 dark:active:bg-white/[0.06]"
+          className="w-full flex items-center justify-between p-4 rounded-2xl border border-zinc-200/90 bg-white shadow-sm transition-colors cursor-pointer hover:border-zinc-300 dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 text-left"
         >
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+          <div className="flex items-center gap-3.5 min-w-0 flex-1 pr-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400">
               <FilePlus2 className="size-5" />
             </div>
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+            <div className="min-w-0 flex-1">
+              <span className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
                 Apply for Leave
-              </h3>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              </span>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
                 Casual &amp; Medical requests
               </p>
             </div>
           </div>
-          <div className="h-8 rounded-full bg-zinc-900 text-white dark:bg-white/10 dark:text-white text-xs font-semibold px-4 flex items-center justify-center pointer-events-none">
-            Apply &gt;
+          <div className="flex items-center gap-1.5 shrink-0 pl-2 pointer-events-none">
+            <span className="rounded-lg bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 dark:bg-white/10 dark:text-zinc-200">
+              Apply &gt;
+            </span>
+          </div>
+        </motion.div>
+
+        {/* 2. Action Card: My Leave Records */}
+        <motion.div
+          role="button"
+          tabIndex={0}
+          whileTap={{ scale: 0.98 }}
+          onClick={() => setOpenHistoryModal(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setOpenHistoryModal(true);
+            }
+          }}
+          className="w-full flex items-center justify-between p-4 rounded-2xl border border-zinc-200/90 bg-white shadow-sm transition-colors cursor-pointer hover:border-zinc-300 dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20 text-left"
+        >
+          <div className="flex items-center gap-3.5 min-w-0 flex-1 pr-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400">
+              <FileCheck className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+                  My Leave Records
+                </span>
+                {leaves.length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 font-mono text-[10px] font-bold">
+                    {leaves.length}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
+                {leaves.length > 0
+                  ? `${leaves.length} record${leaves.length > 1 ? "s" : ""} • Tap to view status`
+                  : "Tap to review submitted leave records"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 pl-2 pointer-events-none">
+            <span className="rounded-lg bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 dark:bg-white/10 dark:text-zinc-200">
+              View &gt;
+            </span>
           </div>
         </motion.div>
       </div>
 
-      {/* Leave Application History */}
-      <Card className="border-zinc-200 dark:border-white/10 shadow-sm">
-        <CardHeader className="pb-3 sm:pb-6">
-          <CardTitle className="text-base font-bold flex items-center gap-2">
-            <FileCheck className="size-4 text-blue-500" />
-            My Leave Records
-          </CardTitle>
-          <CardDescription className="text-xs">
-            Review submitted leave requests, approval status, and remarks.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex h-40 items-center justify-center text-zinc-400">
-              <Loader2 className="size-6 animate-spin" />
-            </div>
-          ) : leaves.length === 0 ? (
-            <div className="p-8 text-center text-sm text-zinc-500">
-              <p>No leave applications submitted yet.</p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setOpenModal(true)}
-                className="mt-3 text-xs gap-1.5 text-blue-600 border-blue-500/30"
-              >
-                <FilePlus2 className="size-3.5" /> Submit First Leave
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {leaves.map((l) => (
-                <div
-                  key={l.id}
-                  className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-zinc-50/50 dark:bg-white/[0.02] p-4 space-y-2.5 transition-colors hover:border-zinc-300 dark:hover:border-white/20"
+      {/* Desktop View: Leave Application History Card */}
+      <div className="hidden md:block">
+        <Card className="border-zinc-200 dark:border-white/10 shadow-sm">
+          <CardHeader className="pb-3 sm:pb-6">
+            <CardTitle className="text-base font-bold flex items-center gap-2">
+              <FileCheck className="size-4 text-blue-500" />
+              My Leave Records
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Review submitted leave requests, approval status, and remarks.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex h-40 items-center justify-center text-zinc-400">
+                <Loader2 className="size-6 animate-spin" />
+              </div>
+            ) : leaves.length === 0 ? (
+              <div className="p-8 text-center text-sm text-zinc-500">
+                <p>No leave applications submitted yet.</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setOpenModal(true)}
+                  className="mt-3 text-xs gap-1.5 text-blue-600 border-blue-500/30"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-sm capitalize text-zinc-900 dark:text-zinc-100">
-                        {l.type} Leave
-                      </span>
-                      <span className="text-xs text-zinc-500 font-mono font-medium">
-                        ({l.startDate} → {l.endDate})
-                      </span>
-                    </div>
-
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border",
-                        l.status === "approved"
-                          ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
-                          : l.status === "rejected"
-                          ? "bg-red-500/10 text-red-600 border-red-500/20"
-                          : "bg-amber-500/10 text-amber-600 border-amber-500/20"
-                      )}
-                    >
-                      {l.status === "approved" ? (
-                        <CheckCircle2 className="size-3" />
-                      ) : l.status === "rejected" ? (
-                        <XCircle className="size-3" />
-                      ) : (
-                        <Clock className="size-3" />
-                      )}
-                      <span className="capitalize">{l.status}</span>
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                    <span className="text-zinc-500 font-medium">Reason: </span>
-                    {l.reason}
-                  </p>
-
-                  {(() => {
-                    const docs = (Array.isArray(l.documentUrls) && l.documentUrls.length > 0)
-                      ? l.documentUrls
-                      : (l.documentUrl ? [l.documentUrl] : []);
-                    if (docs.length === 0) return null;
-                    return (
-                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                        {docs.map((url, idx) => (
-                          <a
-                            key={url + idx}
-                            href={resolveDocumentViewUrl(url)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/20"
-                          >
-                            <FileText className="size-3" />
-                            <span>{docs.length > 1 ? `Medical Doc ${idx + 1}` : "View Attached Certificate / Document"} ↗</span>
-                          </a>
-                        ))}
+                  <FilePlus2 className="size-3.5" /> Submit First Leave
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {leaves.map((l) => (
+                  <div
+                    key={l.id}
+                    className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-zinc-50/50 dark:bg-white/[0.02] p-4 space-y-2.5 transition-colors hover:border-zinc-300 dark:hover:border-white/20"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm capitalize text-zinc-900 dark:text-zinc-100">
+                          {l.type} Leave
+                        </span>
+                        <span className="text-xs text-zinc-500 font-mono font-medium">
+                          ({l.startDate} → {l.endDate})
+                        </span>
                       </div>
-                    );
-                  })()}
 
-                  {l.reviewNotes && (
-                    <div className="p-2.5 rounded-xl bg-zinc-100 dark:bg-white/[0.04] text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-white/5">
-                      <span className="font-semibold text-zinc-900 dark:text-zinc-100">Administration Note: </span>
-                      {l.reviewNotes}
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border",
+                          l.status === "approved"
+                            ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                            : l.status === "rejected"
+                            ? "bg-red-500/10 text-red-600 border-red-500/20"
+                            : "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                        )}
+                      >
+                        {l.status === "approved" ? (
+                          <CheckCircle2 className="size-3" />
+                        ) : l.status === "rejected" ? (
+                          <XCircle className="size-3" />
+                        ) : (
+                          <Clock className="size-3" />
+                        )}
+                        <span className="capitalize">{l.status}</span>
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                      <span className="text-zinc-500 font-medium">Reason: </span>
+                      {l.reason}
+                    </p>
+
+                    {(() => {
+                      const docs = (Array.isArray(l.documentUrls) && l.documentUrls.length > 0)
+                        ? l.documentUrls
+                        : (l.documentUrl ? [l.documentUrl] : []);
+                      if (docs.length === 0) return null;
+                      return (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          {docs.map((url, idx) => (
+                            <button
+                              key={url + idx}
+                              type="button"
+                              onClick={() =>
+                                setPreviewTarget({
+                                  url: resolveDocumentViewUrl(url),
+                                  title: docs.length > 1 ? `Medical Doc ${idx + 1}` : "Medical Certificate / Document",
+                                })
+                              }
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/20 cursor-pointer"
+                            >
+                              <FileText className="size-3" />
+                              <span>{docs.length > 1 ? `Medical Doc ${idx + 1}` : "View Attached Certificate / Document"}</span>
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
+                    {l.reviewNotes && (
+                      <div className="p-2.5 rounded-xl bg-zinc-100 dark:bg-white/[0.04] text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-white/5">
+                        <span className="font-semibold text-zinc-900 dark:text-zinc-100">Administration Note: </span>
+                        {l.reviewNotes}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Leave Application Modal & Mobile Bottom Sheet Drawer */}
       {mounted &&
         createPortal(
           <AnimatePresence>
             {openModal && (
-              <div className="fixed inset-0 z-[10000] flex flex-col justify-end md:justify-center md:items-center p-0 md:p-4">
+              <div
+                className={cn(
+                  "fixed inset-0 z-[10000]",
+                  isMobile
+                    ? "flex flex-col justify-end p-0"
+                    : "flex items-center justify-center p-4"
+                )}
+              >
                 {/* Backdrop click to dismiss */}
                 <motion.div
                   initial={{ opacity: 0 }}
@@ -504,13 +571,22 @@ export function TeacherLeavesPage() {
                   aria-hidden="true"
                 />
 
-                {/* Container: Bottom sheet on mobile with spring physics from bottom */}
+                {/* Container: Bottom sheet on mobile with spring physics, normal centered popup on tablets & desktop */}
                 <motion.div
-                  initial={{ y: "100%" }}
-                  animate={{ y: 0 }}
-                  exit={{ y: "100%" }}
-                  transition={{ type: "spring", damping: 28, stiffness: 280 }}
-                  className="relative z-10 w-full md:max-w-lg max-h-[90dvh] flex flex-col rounded-t-[28px] md:rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-white dark:bg-zinc-950 shadow-2xl overflow-hidden"
+                  initial={isMobile ? { y: "100%" } : { opacity: 0, scale: 0.95, y: 16 }}
+                  animate={isMobile ? { y: 0 } : { opacity: 1, scale: 1, y: 0 }}
+                  exit={isMobile ? { y: "100%" } : { opacity: 0, scale: 0.95, y: 16 }}
+                  transition={
+                    isMobile
+                      ? { type: "spring", damping: 28, stiffness: 280 }
+                      : { type: "spring", damping: 25, stiffness: 320 }
+                  }
+                  className={cn(
+                    "relative z-10 w-full max-h-[90dvh] flex flex-col border border-zinc-200/80 dark:border-white/10 bg-white dark:bg-zinc-950 shadow-2xl overflow-hidden",
+                    isMobile
+                      ? "rounded-t-[28px]"
+                      : "md:max-w-lg rounded-3xl"
+                  )}
                 >
                   {/* Top Right Close Button */}
                   <button
@@ -524,9 +600,11 @@ export function TeacherLeavesPage() {
                   </button>
 
                   {/* Drag handle for mobile */}
-                  <div className="md:hidden flex justify-center pt-3 pb-1">
-                    <div className="w-12 h-1.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
-                  </div>
+                  {isMobile && (
+                    <div className="flex justify-center pt-3 pb-1">
+                      <div className="w-12 h-1.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                    </div>
+                  )}
 
               {/* Modal Header */}
               <div className="px-5 py-3 pr-14">
@@ -643,7 +721,7 @@ export function TeacherLeavesPage() {
                       value={reason}
                       onChange={(e) => setReason(e.target.value)}
                       placeholder="Briefly state the reason for your absence…"
-                      className="w-full rounded-xl border border-zinc-300 bg-white p-3 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-100"
+                      className="w-full rounded-xl border border-zinc-300 bg-white p-3 text-base sm:text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-100"
                     />
                   </label>
 
@@ -704,14 +782,18 @@ export function TeacherLeavesPage() {
                                   )}
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                  <a
-                                    href={resolveDocumentViewUrl(doc.url)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-0.5 rounded"
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setPreviewTarget({
+                                        url: resolveDocumentViewUrl(doc.url),
+                                        title: doc.name,
+                                      })
+                                    }
+                                    className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-0.5 rounded cursor-pointer"
                                   >
                                     Preview
-                                  </a>
+                                  </button>
                                   <button
                                     type="button"
                                     onClick={() => removeDocument(idx)}
@@ -765,6 +847,196 @@ export function TeacherLeavesPage() {
           </AnimatePresence>,
           document.body
         )}
+
+      {/* MODAL 2: My Leave Records Bottom Sheet Modal */}
+      {mounted &&
+        createPortal(
+          <AnimatePresence>
+            {openHistoryModal && (
+              <div
+                className={cn(
+                  "fixed inset-0 z-[10000]",
+                  isMobile
+                    ? "flex flex-col justify-end p-0"
+                    : "flex items-center justify-center p-4"
+                )}
+              >
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="fixed inset-0 bg-black/70 backdrop-blur-sm"
+                  onClick={() => setOpenHistoryModal(false)}
+                  aria-hidden="true"
+                />
+
+                <motion.div
+                  initial={isMobile ? { y: "100%", opacity: 0 } : { opacity: 0, scale: 0.95, y: 16 }}
+                  animate={isMobile ? { y: 0, opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
+                  exit={isMobile ? { y: "100%", opacity: 0 } : { opacity: 0, scale: 0.95, y: 16 }}
+                  transition={
+                    isMobile
+                      ? { type: "spring", damping: 28, stiffness: 280 }
+                      : { type: "spring", damping: 25, stiffness: 320 }
+                  }
+                  className={cn(
+                    "relative z-10 w-full md:max-w-xl max-h-[85dvh] flex flex-col border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-[#1c1c1e] text-zinc-900 dark:text-white shadow-2xl overflow-hidden pb-6 md:pb-4",
+                    isMobile
+                      ? "rounded-t-[28px]"
+                      : "rounded-3xl"
+                  )}
+                >
+                  {/* Top Right Close Button */}
+                  <button
+                    type="button"
+                    onClick={() => setOpenHistoryModal(false)}
+                    className="absolute top-3.5 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer shadow-xs transition-colors"
+                    aria-label="Close"
+                  >
+                    <X className="size-4" />
+                  </button>
+
+                  {/* Drag Handle Pill for mobile */}
+                  {isMobile && (
+                    <div className="mx-auto mt-3 mb-1 h-1.5 w-12 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                  )}
+
+                  {/* Modal Header */}
+                  <div className="px-5 py-3 pr-14 border-b border-zinc-100 dark:border-white/5">
+                    <div className="flex items-center gap-2">
+                      <FileCheck className="size-4 text-blue-500" />
+                      <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                        My Leave Records
+                      </h3>
+                      {leaves.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 font-mono text-[11px] font-bold">
+                          {leaves.length}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      Review submitted leave requests, approval status, and remarks.
+                    </p>
+                  </div>
+
+                  {/* Modal Body */}
+                  <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 custom-scrollbar">
+                    {loading ? (
+                      <div className="flex h-40 items-center justify-center text-zinc-400">
+                        <Loader2 className="size-6 animate-spin" />
+                      </div>
+                    ) : leaves.length === 0 ? (
+                      <div className="p-8 text-center text-sm text-zinc-500">
+                        <p>No leave applications submitted yet.</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setOpenHistoryModal(false);
+                            setOpenModal(true);
+                          }}
+                          className="mt-3 text-xs gap-1.5 text-blue-600 border-blue-500/30"
+                        >
+                          <FilePlus2 className="size-3.5" /> Submit First Leave
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {leaves.map((l) => (
+                          <div
+                            key={l.id}
+                            className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-zinc-50/50 dark:bg-white/[0.02] p-4 space-y-2.5 transition-colors hover:border-zinc-300 dark:hover:border-white/20"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-sm capitalize text-zinc-900 dark:text-zinc-100">
+                                  {l.type} Leave
+                                </span>
+                                <span className="text-xs text-zinc-500 font-mono font-medium">
+                                  ({l.startDate} → {l.endDate})
+                                </span>
+                              </div>
+
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border",
+                                  l.status === "approved"
+                                    ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                                    : l.status === "rejected"
+                                    ? "bg-red-500/10 text-red-600 border-red-500/20"
+                                    : "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                                )}
+                              >
+                                {l.status === "approved" ? (
+                                  <CheckCircle2 className="size-3" />
+                                ) : l.status === "rejected" ? (
+                                  <XCircle className="size-3" />
+                                ) : (
+                                  <Clock className="size-3" />
+                                )}
+                                <span className="capitalize">{l.status}</span>
+                              </span>
+                            </div>
+
+                            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                              <span className="text-zinc-500 font-medium">Reason: </span>
+                              {l.reason}
+                            </p>
+
+                            {(() => {
+                              const docs = (Array.isArray(l.documentUrls) && l.documentUrls.length > 0)
+                                ? l.documentUrls
+                                : (l.documentUrl ? [l.documentUrl] : []);
+                              if (docs.length === 0) return null;
+                              return (
+                                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                  {docs.map((url, idx) => (
+                                    <button
+                                      key={url + idx}
+                                      type="button"
+                                      onClick={() =>
+                                        setPreviewTarget({
+                                          url: resolveDocumentViewUrl(url),
+                                          title: docs.length > 1 ? `Medical Doc ${idx + 1}` : "Medical Certificate / Document",
+                                        })
+                                      }
+                                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/20 cursor-pointer"
+                                    >
+                                      <FileText className="size-3" />
+                                      <span>{docs.length > 1 ? `Medical Doc ${idx + 1}` : "View Attached Certificate / Document"}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              );
+                            })()}
+
+                            {l.reviewNotes && (
+                              <div className="p-2.5 rounded-xl bg-zinc-100 dark:bg-white/[0.04] text-xs text-zinc-700 dark:text-zinc-300 border border-zinc-200/50 dark:border-white/5">
+                                <span className="font-semibold text-zinc-900 dark:text-zinc-100">Administration Note: </span>
+                                {l.reviewNotes}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
+
+      {/* IN-WINDOW MEDIA PREVIEW MODAL */}
+      <MediaPreviewModal
+        isOpen={Boolean(previewTarget)}
+        onClose={() => setPreviewTarget(null)}
+        url={previewTarget?.url ?? null}
+        title={previewTarget?.title}
+      />
     </div>
   );
 }

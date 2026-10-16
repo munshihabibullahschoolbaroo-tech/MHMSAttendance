@@ -36,6 +36,7 @@ import { AppDatePicker } from "@/components/ui/app-date-picker";
 import { AppTimePicker } from "@/components/ui/app-time-picker";
 import { AppSelect } from "@/components/ui/app-select";
 import { Separator } from "@/components/ui/separator";
+import { MediaPreviewModal } from "@/components/ui/media-preview-modal";
 import { isPastLateCutoff, checkSignOutTiming } from "@/lib/date/late-check";
 
 function formatCheckInTime(raw: any): string {
@@ -206,6 +207,7 @@ export function TeacherAttendanceHome() {
   const [leaveDocs, setLeaveDocs] = React.useState<Array<{ url: string; name: string; sizeFormatted?: string }>>([]);
   const [uploadingDoc, setUploadingDoc] = React.useState(false);
   const [submittingLeave, setSubmittingLeave] = React.useState(false);
+  const [previewTarget, setPreviewTarget] = React.useState<{ url: string; title: string } | null>(null);
 
   // Emergency Leave / On-Duty Departure state
   const [emergencyModalOpen, setEmergencyModalOpen] = React.useState(false);
@@ -585,7 +587,7 @@ export function TeacherAttendanceHome() {
   // Punch Out Handler (On-time, requires campus GPS geofence validation)
   const handlePunchOut = async () => {
     if (!gpsCoords) {
-      toast.error("Waiting for GPS location fix. You must be inside school campus to punch out.");
+      toast.error("Waiting for GPS location fix. You must be inside school campus to check out.");
       return;
     }
     setPunching(true);
@@ -610,7 +612,7 @@ export function TeacherAttendanceHome() {
       const resJson = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(resJson.error ?? "Check-out failed");
 
-      toast.success(resJson.message ?? "Punched out from school successfully!");
+      toast.success(resJson.message ?? "Checked out from school successfully!");
       setPunchOutConfirmOpen(false);
       await refreshStatus();
       setActiveSheet(null);
@@ -1017,14 +1019,18 @@ export function TeacherAttendanceHome() {
                       )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <a
-                        href={resolveDocumentViewUrl(doc.url)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-0.5 rounded"
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewTarget({
+                            url: resolveDocumentViewUrl(doc.url),
+                            title: doc.name,
+                          })
+                        }
+                        className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-0.5 rounded cursor-pointer"
                       >
                         Preview
-                      </a>
+                      </button>
                       <button
                         type="button"
                         onClick={() => removeLeaveDoc(idx)}
@@ -1321,7 +1327,7 @@ export function TeacherAttendanceHome() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
-                  Daily Teacher Punch
+                  Daily Attendance (Check In / Out)
                 </span>
                 {isCheckedIn && (
                   <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -1329,9 +1335,9 @@ export function TeacherAttendanceHome() {
               </div>
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">
                 {isCheckedOut
-                  ? "Day Completed • Signed out"
+                  ? "Day Completed • Checked out"
                   : isCheckedIn
-                  ? "Punched in today • Tap for status"
+                  ? "Checked in today • Tap for status"
                   : leave && leave.status === "approved"
                   ? "Excused on Approved Leave"
                   : "Tap to verify GPS and check in"}
@@ -1340,7 +1346,7 @@ export function TeacherAttendanceHome() {
           </div>
           <div className="flex items-center gap-1.5 shrink-0 pl-2 pointer-events-none">
             <span className="rounded-lg bg-zinc-100 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 dark:bg-white/10 dark:text-zinc-200">
-              {isCheckedOut ? "View >" : isCheckedIn ? "Status >" : "Punch >"}
+              {isCheckedOut ? "View >" : isCheckedIn ? "Status >" : "Check In >"}
             </span>
           </div>
         </motion.div>
@@ -1392,12 +1398,12 @@ export function TeacherAttendanceHome() {
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg font-bold flex items-center gap-2">
                 <Clock className="h-5 w-5 text-blue-600" />
-                Daily Teacher Punch
+                Daily Attendance (Check In / Out)
               </CardTitle>
               {isCheckedIn ? (
                 <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  Punched In Today
+                  Checked In Today
                 </span>
               ) : leave && leave.status === "approved" ? (
                 <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/20">
@@ -1416,7 +1422,7 @@ export function TeacherAttendanceHome() {
                 </span>
               ) : (
                 <span className="text-xs font-medium text-zinc-500 px-2 py-0.5 rounded bg-zinc-100 dark:bg-white/5">
-                  Not Punched In
+                  Not Checked In
                 </span>
               )}
             </div>
@@ -1444,7 +1450,7 @@ export function TeacherAttendanceHome() {
                     </p>
                   </div>
                   <p className="text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-100/60 dark:bg-blue-900/40 p-2.5 rounded-lg border border-blue-200/50 dark:border-blue-800/40">
-                    ✓ Your leave is approved by School Administration. Daily punch is excused for today.
+                    ✓ Your leave is approved by School Administration. Daily attendance is excused for today.
                   </p>
                   <div className="pt-2">
                     <Button
@@ -1456,7 +1462,7 @@ export function TeacherAttendanceHome() {
                       className="text-xs text-zinc-600 border-zinc-300 dark:border-white/10"
                     >
                       {punching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />}
-                      Punch In Anyway (If Present on Campus)
+                      Check In Anyway (If Present on Campus)
                     </Button>
                   </div>
                 </div>
@@ -1470,7 +1476,7 @@ export function TeacherAttendanceHome() {
                       Check-in Opens at {lateCheckInfo.openWindowStartFormatted}
                     </h4>
                     <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 max-w-sm mx-auto leading-relaxed">
-                      Morning punch-in begins strictly 2 hours before school opening ({data?.config?.schoolOpenTime || "08:00 AM"}). Current time is {lateCheckInfo.currentFormatted}.
+                      Morning check-in begins strictly 2 hours before school opening ({data?.config?.schoolOpenTime || "08:00 AM"}). Current time is {lateCheckInfo.currentFormatted}.
                     </p>
                   </div>
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-100/70 dark:bg-sky-950/40 text-[11px] font-semibold text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800/40">
@@ -1502,7 +1508,7 @@ export function TeacherAttendanceHome() {
                     <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
                       <AlertTriangle className="size-4 shrink-0 text-amber-500" />
                       <span>
-                        Past morning cutoff ({data?.config?.teacherLateTime || "09:00 AM"}). Punching in will be recorded as late arrival.
+                        Past morning cutoff ({data?.config?.teacherLateTime || "09:00 AM"}). Check-in will be recorded as late arrival.
                       </span>
                     </div>
                   )}
@@ -1519,7 +1525,7 @@ export function TeacherAttendanceHome() {
                     ) : (
                       <LogIn className="h-5 w-5" />
                     )}
-                    <span>{punching ? "Verifying Geofence…" : "Punch In (Login to School)"}</span>
+                    <span>{punching ? "Verifying Geofence…" : "Check In (School Arrival)"}</span>
                   </Button>
                   <p className="text-center text-[11px] text-zinc-500">
                     Validates your GPS within {config?.radiusMeters}m of school premises.
@@ -1533,14 +1539,14 @@ export function TeacherAttendanceHome() {
                   Day Completed!
                 </h4>
                 <p className="text-xs text-zinc-500 mt-1">
-                  You have successfully punched in and signed out for today. See you tomorrow!
+                  You have successfully checked in and checked out for today. See you tomorrow!
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="rounded-xl border border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/20 p-3.5 flex items-center justify-between text-xs">
                   <div>
-                    <span className="text-zinc-500">Punch In Recorded:</span>
+                    <span className="text-zinc-500">Check In Recorded:</span>
                     <p className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
                       {formatCheckInTime(data?.session?.checkInTime)}
                     </p>
@@ -1672,7 +1678,7 @@ export function TeacherAttendanceHome() {
                     className="h-12 w-full gap-2.5 border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 hover:text-red-800 dark:border-red-500/40 dark:text-red-400 font-semibold text-sm shadow-sm cursor-pointer"
                   >
                     {punching ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-                    <span>Sign Out / Punch Out from School</span>
+                    <span>Check Out (Sign Out from School)</span>
                   </Button>
                 )}
               </div>
@@ -1732,14 +1738,14 @@ export function TeacherAttendanceHome() {
                   <div className="px-5 py-2.5 pr-14">
                     <div className="space-y-0.5">
                       <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                        {activeSheet === "punch" && "Daily Teacher Punch"}
+                        {activeSheet === "punch" && "Daily Attendance (Check In / Out)"}
                         {activeSheet === "leave" && "Apply for Leave"}
                         {activeSheet === "emergency" && "Emergency Leave / On-Duty Departure"}
                       </h3>
                       <p className="text-[11px] text-zinc-500 truncate">
                         {activeSheet === "punch" && `${config?.name} • ${config?.campusName}`}
                         {activeSheet === "leave" && "Submit an official leave request to administration"}
-                        {activeSheet === "emergency" && "Leaving school campus after morning punch-in"}
+                        {activeSheet === "emergency" && "Leaving school campus after morning check-in"}
                       </p>
                     </div>
                   </div>
@@ -1770,7 +1776,7 @@ export function TeacherAttendanceHome() {
                                   className="w-full text-xs"
                                 >
                                   {punching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />}
-                                  Punch In Anyway (If on Campus)
+                                  Check In Anyway (If on Campus)
                                 </Button>
                               </div>
                             </div>
@@ -1834,7 +1840,7 @@ export function TeacherAttendanceHome() {
                                   <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
                                     <AlertTriangle className="size-4 shrink-0 text-amber-500" />
                                     <span>
-                                      Past morning cutoff ({data?.config?.teacherLateTime || "09:00 AM"}). Punching in will be recorded as late arrival.
+                                      Past morning cutoff ({data?.config?.teacherLateTime || "09:00 AM"}). Check-in will be recorded as late arrival.
                                     </span>
                                   </div>
                                 )}
@@ -1851,7 +1857,7 @@ export function TeacherAttendanceHome() {
                                   ) : (
                                     <LogIn className="h-5 w-5" />
                                   )}
-                                  <span>{punching ? "Verifying Geofence…" : "Punch In Now"}</span>
+                                  <span>{punching ? "Verifying Geofence…" : "Check In Now"}</span>
                                 </Button>
                                 <p className="text-center text-[11px] text-zinc-500">
                                   Validates your live GPS location inside {config?.radiusMeters}m of campus premises.
@@ -1866,14 +1872,14 @@ export function TeacherAttendanceHome() {
                               Day Completed!
                             </h4>
                             <p className="text-xs text-zinc-500 mt-1">
-                              You have successfully punched in and signed out for today. Have a restful evening!
+                              You have successfully checked in and checked out for today. Have a restful evening!
                             </p>
                           </div>
                         ) : (
                           <div className="space-y-3">
                             <div className="rounded-xl border border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/20 p-4 flex items-center justify-between text-xs">
                               <div>
-                                <span className="text-zinc-500">Punch In Recorded:</span>
+                                <span className="text-zinc-500">Check In Recorded:</span>
                                 <p className="font-bold text-emerald-700 dark:text-emerald-400 text-sm">
                                   {formatCheckInTime(data?.session?.checkInTime)}
                                 </p>
@@ -2006,7 +2012,7 @@ export function TeacherAttendanceHome() {
                                   className="h-12 w-full gap-2.5 border-red-500/30 bg-red-500/10 text-red-700 hover:bg-red-500/20 dark:border-red-500/40 dark:text-red-400 font-semibold text-sm shadow-sm cursor-pointer"
                                 >
                                   {punching ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-                                  <span>Sign Out / Punch Out from School</span>
+                                  <span>Check Out (Sign Out from School)</span>
                                 </Button>
                                 <p className="text-center text-[11px] text-zinc-500">
                                   Validates your live GPS location inside {config?.radiusMeters}m of campus to sign out.
@@ -2530,13 +2536,21 @@ export function TeacherAttendanceHome() {
         open={punchOutConfirmOpen}
         onClose={() => setPunchOutConfirmOpen(false)}
         onConfirm={handlePunchOut}
-        title="School Punch Out"
+        title="School Check Out"
         subtitle="End school working day"
-        description={`Are you sure you want to punch out / sign out from ${config?.name || "MHMS"} for today? Your live GPS coordinates will be verified to ensure you are within the school campus premises (${config?.radiusMeters || 250}m boundary).`}
-        confirmText="Confirm Punch Out"
+        description={`Are you sure you want to check out / sign out from ${config?.name || "MHMS"} for today? Your live GPS coordinates will be verified to ensure you are within the school campus premises (${config?.radiusMeters || 250}m boundary).`}
+        confirmText="Confirm Check Out"
         cancelText="Cancel"
         loading={punching}
         variant="warning"
+      />
+
+      {/* IN-WINDOW MEDIA PREVIEW MODAL */}
+      <MediaPreviewModal
+        isOpen={Boolean(previewTarget)}
+        onClose={() => setPreviewTarget(null)}
+        url={previewTarget?.url ?? null}
+        title={previewTarget?.title}
       />
     </div>
   );

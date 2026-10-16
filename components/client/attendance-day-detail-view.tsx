@@ -10,8 +10,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, resolveDocumentViewUrl } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MediaPreviewModal } from "@/components/ui/media-preview-modal";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
 import { normalizeTimeZoneId, workTimeZoneUiLabel } from "@/lib/date/time-zone";
 import type { CalendarMode } from "@/lib/date/bs-calendar";
@@ -218,6 +219,7 @@ export function AttendanceDayDetailView({
 }) {
   const { user } = useDashboardUser();
   const { mode } = useCalendarMode();
+  const [previewTarget, setPreviewTarget] = React.useState<{ url: string; title: string } | null>(null);
 
   const displayTz = normalizeTimeZoneId(user?.timeZone);
   const zoneLabel = workTimeZoneUiLabel(displayTz);
@@ -335,14 +337,18 @@ export function AttendanceDayDetailView({
               </div>
               {data.leave.documentUrl && (
                 <div className="pt-1">
-                  <a
-                    href={data.leave.documentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPreviewTarget({
+                        url: resolveDocumentViewUrl(data.leave?.documentUrl),
+                        title: "Medical Certificate / Document",
+                      })
+                    }
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
                   >
-                    <FileText className="size-4" /> View Medical Certificate / Document ↗
-                  </a>
+                    <FileText className="size-4" /> View Medical Certificate / Document
+                  </button>
                 </div>
               )}
             </CardContent>
@@ -735,6 +741,14 @@ export function AttendanceDayDetailView({
           </Card>
         </>
       )}
+
+      {/* IN-WINDOW MEDIA PREVIEW MODAL */}
+      <MediaPreviewModal
+        isOpen={Boolean(previewTarget)}
+        onClose={() => setPreviewTarget(null)}
+        url={previewTarget?.url ?? null}
+        title={previewTarget?.title}
+      />
     </div>
   );
 }
