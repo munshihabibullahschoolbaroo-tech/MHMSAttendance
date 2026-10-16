@@ -5,13 +5,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Bell, ExternalLink } from "lucide-react";
+import { Bell, ExternalLink, Check, CheckCheck, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import { NotificationsListSkeleton } from "@/components/client/dashboard-skeletons";
 import { workCheckInHrefFromAssignedSiteIds } from "@/lib/client/work-assignment-href";
 import { Separator } from "@/components/ui/separator";
+import { toast } from "sonner";
 
 /** Synthesizes a soft bell ding via Web Audio API — no audio file required. */
 function playNotificationSound() {
@@ -134,24 +135,39 @@ export function NotificationsDropdown() {
     prevUnreadRef.current = unread;
   }, [unread]);
 
+  const [markingAll, setMarkingAll] = React.useState(false);
+
   const markReadVisible = async () => {
     const ids = items.filter((i) => !i.read).map((i) => i.id);
-    if (!ids.length) return;
+    if (!ids.length && unread === 0) return;
+
+    // 1. Instant optimistic update so UI clears immediately
+    setItems((prev) => prev.map((item) => ({ ...item, read: true })));
+    setMarkingAll(true);
+
     try {
       const h = await authHeaders();
-      await fetch("/api/notifications", {
+      const res = await fetch("/api/notifications", {
         method: "PATCH",
         headers: { ...h, "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ all: true, ids }),
       });
-      await load({ fresh: true });
+      if (!res.ok) throw new Error("Failed to mark read");
+      toast.success("All notifications marked as read");
+      void load({ fresh: true });
     } catch {
-      /* ignore */
+      toast.error("Could not sync read status with server");
+    } finally {
+      setMarkingAll(false);
     }
   };
 
   const markReadIds = async (ids: string[]) => {
     if (!ids.length) return;
+    // 1. Instant optimistic update
+    setItems((prev) =>
+      prev.map((item) => (ids.includes(item.id) ? { ...item, read: true } : item))
+    );
     try {
       const h = await authHeaders();
       await fetch("/api/notifications", {
@@ -159,7 +175,7 @@ export function NotificationsDropdown() {
         headers: { ...h, "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),
       });
-      await load({ fresh: true });
+      void load({ fresh: true });
     } catch {
       /* ignore */
     }
@@ -195,14 +211,30 @@ export function NotificationsDropdown() {
           <div className="flex shrink-0 items-center justify-between px-4 py-3">
             <span className="text-sm font-semibold">Notifications</span>
             {unread > 0 ? (
-              <button
+              <Button
                 type="button"
-                className="text-xs font-medium text-cyan-600 hover:text-cyan-700 dark:text-cyan-400 dark:hover:text-cyan-300"
-                onClick={() => void markReadVisible()}
+                variant="ghost"
+                size="sm"
+                disabled={markingAll}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void markReadVisible();
+                }}
+                className="h-7 gap-1.5 px-2.5 text-xs font-semibold text-cyan-600 hover:bg-cyan-500/10 hover:text-cyan-700 dark:text-cyan-400 dark:hover:bg-cyan-500/10 dark:hover:text-cyan-300 rounded-lg transition-colors cursor-pointer"
               >
-                Mark all read
-              </button>
-            ) : null}
+                {markingAll ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <CheckCheck className="size-3.5" />
+                )}
+                <span>Mark all read</span>
+              </Button>
+            ) : (
+              <span className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                All read
+              </span>
+            )}
           </div>
           <Separator />
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -216,7 +248,7 @@ export function NotificationsDropdown() {
                   <li
                     key={row.id}
                     className={cn(
-                      "px-4 py-3 text-left",
+                      "px-4 py-3 text-left transition-colors",
                       !row.read ? "bg-cyan-500/10 dark:bg-cyan-500/5" : "bg-transparent"
                     )}
                   >
@@ -228,54 +260,71 @@ export function NotificationsDropdown() {
                         {row.body}
                       </p>
                     ) : null}
-                    {row.kind === "assignment" ? (
-                      <div className="mt-3">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="w-full"
-                          asChild
-                        >
-                          <Link
-                            href={workHrefFromRow(row)}
-                            onClick={() => {
-                              if (!row.read) void markReadIds([row.id]);
-                              setOpen(false);
-                            }}
+                    <div className="mt-2.5 flex items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {row.kind === "assignment" ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="h-7 text-xs font-medium cursor-pointer"
+                            asChild
                           >
-                            Go to Work
-                          </Link>
-                        </Button>
-                      </div>
-                    ) : null}
-                    {/* View button for overtime/offsite/system notifications with a link */}
-                    {row.kind !== "assignment" && row.link ? (
-                      <div className="mt-2">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="h-7 gap-1 text-xs"
-                          asChild
-                        >
-                          <Link
-                            href={row.link}
-                            onClick={() => {
-                              if (!row.read) void markReadIds([row.id]);
-                              setOpen(false);
-                            }}
+                            <Link
+                              href={workHrefFromRow(row)}
+                              onClick={() => {
+                                if (!row.read) void markReadIds([row.id]);
+                                setOpen(false);
+                              }}
+                            >
+                              Go to Work
+                            </Link>
+                          </Button>
+                        ) : null}
+                        {/* View button for overtime/offsite/system notifications with a link */}
+                        {row.kind !== "assignment" && row.link ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="h-7 gap-1 text-xs font-medium cursor-pointer"
+                            asChild
                           >
-                            View <ExternalLink className="size-3" />
-                          </Link>
-                        </Button>
+                            <Link
+                              href={row.link}
+                              onClick={() => {
+                                if (!row.read) void markReadIds([row.id]);
+                                setOpen(false);
+                              }}
+                            >
+                              View <ExternalLink className="size-3" />
+                            </Link>
+                          </Button>
+                        ) : null}
+                        {/* Explicit mark read button for unread notification */}
+                        {!row.read ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void markReadIds([row.id]);
+                            }}
+                            className="h-7 gap-1 px-2 text-xs text-zinc-500 hover:text-cyan-600 hover:bg-cyan-500/10 dark:text-zinc-400 dark:hover:text-cyan-300 cursor-pointer"
+                          >
+                            <Check className="size-3" />
+                            <span>Mark read</span>
+                          </Button>
+                        ) : null}
                       </div>
-                    ) : null}
-                    {row.kind && row.kind !== "assignment" ? (
-                      <p className="mt-2 text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-600">
-                        {row.kind.replace(/_/g, " ")}
-                      </p>
-                    ) : null}
+                      {row.kind && row.kind !== "assignment" ? (
+                        <p className="text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 font-semibold">
+                          {row.kind.replace(/_/g, " ")}
+                        </p>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
               </ul>

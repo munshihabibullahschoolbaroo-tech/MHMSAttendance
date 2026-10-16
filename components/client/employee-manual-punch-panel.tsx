@@ -146,27 +146,31 @@ export function EmployeeManualPunchPanel() {
             </div>
           </CardHeader>
           <CardContent className="space-y-5 pt-5">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <DateField
-                id="manual-punch-date"
-                label="Date of Missing Attendance"
-                value={date}
-                onChange={setDate}
-                timeZone={tz}
-              />
-              <div>
+            <div className="grid gap-4 sm:grid-cols-2 min-w-0">
+              <div className="min-w-0">
+                <DateField
+                  id="manual-punch-date"
+                  label="Date of Missing Attendance"
+                  value={date}
+                  onChange={setDate}
+                  timeZone={tz}
+                  className="w-full min-w-0"
+                />
+              </div>
+              <div className="min-w-0">
                 <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                   Assign to School Admin <span className="text-red-500">*</span>
                 </label>
                 <SearchableSelect
                   value={assigneeId}
                   onValueChange={setAssigneeId}
+                  className="w-full min-w-0"
+                  triggerClassName="w-full min-w-0 truncate"
                   options={assignees.map((a) => {
                     const isSuper = a.role === "super_admin";
                     const roleBadge = isSuper ? "👑 Super Admin" : "🛡️ School Admin";
-                    const label = a.name
-                      ? `${a.name} (${a.email}) — ${roleBadge}`
-                      : `${a.email} — ${roleBadge}`;
+                    const displayName = (a.name || a.email.split("@")[0] || "Admin").trim();
+                    const label = `${displayName} — ${roleBadge}`;
                     return {
                       value: a.id,
                       label,

@@ -4,10 +4,11 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
-import { Bell, CheckCheck, ArrowLeft, ExternalLink } from "lucide-react";
+import { Bell, Check, CheckCheck, ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
 import { getFirebaseAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 type Row = {
   id: string;
@@ -86,20 +87,30 @@ export function NotificationsPage() {
 
   const markAll = async () => {
     const ids = items.filter((i) => !i.read).map((i) => i.id);
-    if (!ids.length) return;
+    if (!ids.length && unread === 0) return;
     setMarking(true);
+    // Instant optimistic update
+    setItems((prev) => prev.map((i) => ({ ...i, read: true })));
     try {
       const h = await authHeaders();
-      await fetch("/api/notifications", {
+      const res = await fetch("/api/notifications", {
         method: "PATCH",
         headers: { ...h, "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ all: true, ids }),
       });
+      if (!res.ok) throw new Error("Failed to mark read");
+      toast.success("All notifications marked as read");
       await load({ fresh: true });
-    } catch { /* ignore */ } finally { setMarking(false); }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to mark all read");
+    } finally {
+      setMarking(false);
+    }
   };
 
   const markOne = async (id: string) => {
+    // Instant optimistic update
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, read: true } : i)));
     try {
       const h = await authHeaders();
       await fetch("/api/notifications", {
@@ -107,8 +118,10 @@ export function NotificationsPage() {
         headers: { ...h, "Content-Type": "application/json" },
         body: JSON.stringify({ ids: [id] }),
       });
-      setItems((prev) => prev.map((i) => i.id === id ? { ...i, read: true } : i));
-    } catch { /* ignore */ }
+      void load({ fresh: true });
+    } catch {
+      /* ignore */
+    }
   };
 
   const unread = items.filter((i) => !i.read).length;
@@ -131,18 +144,24 @@ export function NotificationsPage() {
             </span>
           )}
         </div>
-        {unread > 0 && (
+        {unread > 0 ? (
           <Button
             type="button"
             variant="secondary"
             size="sm"
             disabled={marking}
             onClick={() => void markAll()}
-            className="gap-1.5"
+            className="gap-1.5 cursor-pointer"
           >
-            <CheckCheck className="size-4" />
-            Mark all read
+            {marking ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <CheckCheck className="size-4" />
+            )}
+            <span>Mark all read</span>
           </Button>
+        ) : (
+          <span className="text-xs text-zinc-400 dark:text-zinc-500 font-medium">All read</span>
         )}
       </div>
 
@@ -199,13 +218,16 @@ export function NotificationsPage() {
                       </Button>
                     )}
                     {!row.read && (
-                      <button
+                      <Button
                         type="button"
-                        className="text-xs text-zinc-500 hover:text-zinc-300"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-xs text-zinc-500 hover:text-cyan-600 hover:bg-cyan-500/10 dark:text-zinc-400 dark:hover:text-cyan-300 cursor-pointer"
                         onClick={() => void markOne(row.id)}
                       >
-                        Mark read
-                      </button>
+                        <Check className="size-3" />
+                        <span>Mark read</span>
+                      </Button>
                     )}
                   </div>
                 </div>

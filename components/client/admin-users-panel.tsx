@@ -590,7 +590,7 @@ export function AdminUsersPanel() {
                 </div>
                 <button
                   type="button"
-                  className="rounded-lg p-2 text-zinc-400 hover:bg-white/10 hover:text-zinc-100"
+                  className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100 transition-colors"
                   aria-label="Close"
                   onClick={() => setCalendarOpen(false)}
                 >
@@ -1290,7 +1290,7 @@ export function AdminUsersPanel() {
               )}
 
               {/* 4 Wing / Department Category Tabs */}
-              <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3 pt-1">
+              <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-white/10 pb-3 pt-1">
                 {WING_TABS.map((tab) => {
                   const isActive = activeWingTab === tab.key;
                   const count = wingCounts[tab.key];
@@ -1307,19 +1307,37 @@ export function AdminUsersPanel() {
                       className={cn(
                         "group relative inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition-all cursor-pointer",
                         isActive
-                          ? "bg-white/10 text-white border border-white/20 shadow-xs shadow-black/20"
-                          : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] border border-transparent"
+                          ? "bg-zinc-900 text-white shadow-sm dark:bg-white/15 dark:text-zinc-100 dark:border dark:border-white/20"
+                          : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 border border-transparent dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-white/[0.04]"
                       )}
                     >
                       <Icon
                         className={cn(
                           "size-3.5 transition-colors",
-                          isActive ? "text-cyan-400" : "text-zinc-500 group-hover:text-zinc-300"
+                          isActive
+                            ? "text-cyan-400 dark:text-cyan-400"
+                            : "text-zinc-500 group-hover:text-zinc-800 dark:text-zinc-500 dark:group-hover:text-zinc-300"
                         )}
                       />
-                      <span>{tab.label}</span>
+                      <span
+                        className={cn(
+                          "transition-colors",
+                          isActive
+                            ? "text-white dark:text-zinc-100"
+                            : "text-zinc-700 group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-zinc-100"
+                        )}
+                      >
+                        {tab.label}
+                      </span>
                       {tab.badgeLabel && (
-                        <span className="hidden sm:inline text-[10px] font-normal text-zinc-500">
+                        <span
+                          className={cn(
+                            "hidden sm:inline text-[10px] font-normal transition-colors",
+                            isActive
+                              ? "text-zinc-300 dark:text-zinc-400"
+                              : "text-zinc-500 group-hover:text-zinc-700 dark:text-zinc-500 dark:group-hover:text-zinc-400"
+                          )}
+                        >
                           ({tab.badgeLabel})
                         </span>
                       )}
@@ -1327,8 +1345,8 @@ export function AdminUsersPanel() {
                         className={cn(
                           "rounded-full px-2 py-0.5 text-[11px] tabular-nums font-bold leading-none transition-colors",
                           isActive
-                            ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30"
-                            : "bg-white/[0.08] text-zinc-400 group-hover:bg-white/[0.12] group-hover:text-zinc-200"
+                            ? "bg-cyan-400/20 text-cyan-300 border border-cyan-400/30 dark:bg-cyan-500/20 dark:text-cyan-300 dark:border-cyan-500/30"
+                            : "bg-zinc-200/80 text-zinc-700 group-hover:bg-zinc-300 group-hover:text-zinc-900 dark:bg-white/[0.08] dark:text-zinc-400 dark:group-hover:bg-white/[0.12] dark:group-hover:text-zinc-200"
                         )}
                       >
                         {count}

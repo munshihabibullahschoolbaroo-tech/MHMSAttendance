@@ -77,16 +77,22 @@ export function OnboardingPage() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
+  const initializedNameRef = React.useRef(Boolean(user?.name));
+
   React.useEffect(() => {
-    if (user?.name && !fullName) {
+    if (initializedNameRef.current) return;
+
+    if (user?.name) {
       setFullName(user.name);
-    } else if (!fullName) {
+      initializedNameRef.current = true;
+    } else {
       const auth = getFirebaseAuth();
       if (auth.currentUser?.displayName) {
         setFullName(auth.currentUser.displayName);
+        initializedNameRef.current = true;
       }
     }
-  }, [user?.name, fullName]);
+  }, [user?.name]);
 
   // Fetch school config and taken positions
   React.useEffect(() => {

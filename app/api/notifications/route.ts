@@ -59,7 +59,8 @@ export async function GET(req: Request) {
 }
 
 const markReadSchema = z.object({
-  ids: z.array(z.string().min(1)).min(1),
+  ids: z.array(z.string().min(1)).optional(),
+  all: z.boolean().optional(),
 });
 
 export async function PATCH(req: Request) {
@@ -79,15 +80,32 @@ export async function PATCH(req: Request) {
   }
 
   const db = adminDb();
-  const refs = parsed.data.ids.map((id) => db.collection("notifications").doc(id));
-  const snaps = await db.getAll(...refs);
   const batch = db.batch();
-  for (const s of snaps) {
-    if (!s.exists) continue;
-    const row = s.data() as { userId?: string };
-    if (row.userId !== uid) continue;
-    batch.update(s.ref, { read: true, readAt: FieldValue.serverTimestamp() });
+
+  if (parsed.data.all) {
+    const unreadSnap = await db
+      .collection("notifications")
+      .where("userId", "==", uid)
+      .where("read", "==", false)
+      .limit(100)
+      .get();
+
+    for (const doc of unreadSnap.docs) {
+      batch.update(doc.ref, { read: true, readAt: FieldValue.serverTimestamp() });
+    }
   }
+
+  if (parsed.data.ids && parsed.data.ids.length > 0) {
+    const refs = parsed.data.ids.map((id) => db.collection("notifications").doc(id));
+    const snaps = await db.getAll(...refs);
+    for (const s of snaps) {
+      if (!s.exists) continue;
+      const row = s.data() as { userId?: string };
+      if (row.userId !== uid) continue;
+      batch.update(s.ref, { read: true, readAt: FieldValue.serverTimestamp() });
+    }
+  }
+
   await batch.commit();
   notifCache.delete(uid); // invalidate so next GET reflects updated read state
   return NextResponse.json({ ok: true });

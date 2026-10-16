@@ -59,7 +59,7 @@ export const DateField = React.forwardRef<HTMLInputElement, DateFieldProps>(
               aria-labelledby={label ? labelTextId : undefined}
               aria-label={label ? undefined : ariaLabel}
               className={cn(
-                "group relative block w-full cursor-pointer overflow-hidden rounded-2xl text-left",
+                "group relative block w-full min-w-0 max-w-full cursor-pointer overflow-hidden rounded-2xl text-left",
                 "border border-zinc-200/90 bg-gradient-to-b from-white to-zinc-50/90",
                 "shadow-sm shadow-zinc-900/[0.04] ring-1 ring-inset ring-white/60",
                 "transition-[box-shadow,border-color,transform] duration-200",
@@ -76,7 +76,7 @@ export const DateField = React.forwardRef<HTMLInputElement, DateFieldProps>(
             >
               <div
                 className={cn(
-                  "relative z-0 flex min-h-[3.25rem] w-full flex-col justify-center",
+                  "relative z-0 flex min-h-[3.25rem] w-full min-w-0 flex-col justify-center",
                   label ? "gap-0.5 px-4 pb-3 pt-3" : "gap-0 px-4 py-3"
                 )}
               >
