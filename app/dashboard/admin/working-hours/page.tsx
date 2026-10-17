@@ -30,7 +30,10 @@ import {
   TeacherMonthData,
 } from "@/lib/school/attendance-pdf";
 import { toast } from "sonner";
-import { Loader2, Download, Archive, Users, FileSpreadsheet } from "lucide-react";
+import { Loader2, Download, Archive, Users, FileSpreadsheet, X } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { AppSelect } from "@/components/ui/app-select";
+import { cn } from "@/lib/utils";
 
 type UserRow = {
   id: string;
@@ -49,10 +52,13 @@ export default function AdminWorkingHoursPage() {
   const [workerId, setWorkerId] = React.useState("");
   const [periodOpen, setPeriodOpen] = React.useState(false);
   const [periodMode, setPeriodMode] = React.useState<"year" | "range">("year");
-  const [periodYear, setPeriodYear] = React.useState(() => {
-    const current = currentMonthYyyyMmForMode("ad", DEFAULT_ATTENDANCE_TIME_ZONE);
-    return Number(current.split("-")[0]) || DateTime.now().year;
-  });
+  const { mode } = useCalendarMode();
+  const defaultYear = React.useMemo(() => {
+    const current = currentMonthYyyyMmForMode(mode, DEFAULT_ATTENDANCE_TIME_ZONE);
+    return current.split("-")[0] || String(DateTime.now().year);
+  }, [mode]);
+
+  const [periodYear, setPeriodYear] = React.useState<string>(defaultYear);
   const [periodStartMonth, setPeriodStartMonth] = React.useState(() =>
     currentMonthYyyyMmForMode("ad", DEFAULT_ATTENDANCE_TIME_ZONE)
   );
@@ -67,10 +73,14 @@ export default function AdminWorkingHoursPage() {
   const cancelDownloadRef = React.useRef(false);
   const activeFetchControllerRef = React.useRef<AbortController | null>(null);
   const [mounted, setMounted] = React.useState(false);
-  const { mode } = useCalendarMode();
+  const [isMobile, setIsMobile] = React.useState(false);
 
   React.useEffect(() => {
     setMounted(true);
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
   }, []);
 
   const prevModeRef = React.useRef(mode);
@@ -92,6 +102,9 @@ export default function AdminWorkingHoursPage() {
       setPeriodEndMonth((prev) =>
         convertMonthMode(prev, prevModeRef.current, mode)
       );
+      const current = currentMonthYyyyMmForMode(mode, DEFAULT_ATTENDANCE_TIME_ZONE);
+      const newY = current.split("-")[0] || String(DateTime.now().year);
+      setPeriodYear(newY);
       prevModeRef.current = mode;
     }
   }, [mode, mounted]);
@@ -163,10 +176,12 @@ export default function AdminWorkingHoursPage() {
 
   const buildMonthsFromPeriod = React.useCallback(() => {
     if (periodMode === "year") {
+      const targetYearNum = parseInt(periodYear, 10) || parseInt(defaultYear, 10);
+      const targetYearStr = String(targetYearNum).padStart(4, "0");
       return Array.from(
         { length: 12 },
         (_, i) =>
-          `${String(periodYear).padStart(4, "0")}-${String(i + 1).padStart(2, "0")}`
+          `${targetYearStr}-${String(i + 1).padStart(2, "0")}`
       );
     }
     const s = DateTime.fromFormat(periodStartMonth, "yyyy-MM");
@@ -180,7 +195,7 @@ export default function AdminWorkingHoursPage() {
       c = c.plus({ months: 1 });
     }
     return out;
-  }, [periodEndMonth, periodMode, periodStartMonth, periodYear]);
+  }, [defaultYear, periodEndMonth, periodMode, periodStartMonth, periodYear]);
 
   const buildPdfBytes = React.useCallback(
     async (rows: HoursPayload[], titlePeriod: string): Promise<Uint8Array> => {
@@ -210,9 +225,11 @@ export default function AdminWorkingHoursPage() {
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
       const months = buildMonthsFromPeriod();
+      const targetYearNum = parseInt(periodYear, 10) || parseInt(defaultYear, 10);
+      const modeSuffix = mode === "bs" ? "BS" : "AD";
       const periodTitle =
         periodMode === "year"
-          ? `${periodYear}`
+          ? `${targetYearNum} ${modeSuffix}`
           : `${periodStartMonth} to ${periodEndMonth}`;
       const zip = new JSZip();
 
@@ -251,9 +268,11 @@ export default function AdminWorkingHoursPage() {
 
         if (cancelDownloadRef.current) throw new Error("Download cancelled");
         const pdf = await buildPdfBytes(monthRows, periodTitle);
+        const targetYearNum = parseInt(periodYear, 10) || parseInt(defaultYear, 10);
+        const modeSuffix = mode === "bs" ? "BS" : "AD";
         const suffix =
           periodMode === "year"
-            ? `${periodYear}`
+            ? `${targetYearNum}-${modeSuffix}`
             : `${periodStartMonth}-${periodEndMonth}`;
         folder.file(`MHMS-Teacher-Attendance-${suffix}.pdf`, pdf);
         setDownloadDoneCount(idx + 1);
@@ -382,114 +401,214 @@ export default function AdminWorkingHoursPage() {
           <WorkingHoursMonthPanel key={workerId} workerId={workerId} />
         ) : null}
 
-        {/* Batch Export Modal */}
-        {periodOpen && mounted && typeof document !== "undefined"
+        {/* Batch Export Modal (iOS Bottom Sheet on Mobile, Centered Modal on Desktop) */}
+        {mounted && typeof document !== "undefined"
           ? createPortal(
-              <div className="fixed inset-0 z-1360 flex items-center justify-center p-4">
-                <button
-                  type="button"
-                  className="absolute inset-0 bg-zinc-950/70 backdrop-blur-sm"
-                  aria-label="Close all-employees export modal"
-                  onClick={() => setPeriodOpen(false)}
-                />
-                <Card className="relative z-1 w-full max-w-md border border-white/10 bg-zinc-950 text-zinc-100 shadow-2xl">
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Archive className="size-4 text-blue-400" />
-                      Batch Export All Staff Attendance
-                    </CardTitle>
-                    <CardDescription>
-                      Downloads an archive containing verified attendance PDF reports for all {users.length} teachers and staff.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={periodMode === "year" ? "default" : "secondary"}
-                        onClick={() => setPeriodMode("year")}
-                      >
-                        Full Year
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={periodMode === "range" ? "default" : "secondary"}
-                        onClick={() => setPeriodMode("range")}
-                      >
-                        Custom Range
-                      </Button>
-                    </div>
-
-                    {periodMode === "year" ? (
-                      <label className="block text-sm">
-                        <span className="mb-1 block text-zinc-400">Year</span>
-                        <input
-                          type="number"
-                          min={2000}
-                          max={2100}
-                          value={periodYear}
-                          onChange={(e) =>
-                            setPeriodYear(
-                              Number(e.target.value) || new Date().getFullYear()
-                            )
-                          }
-                          className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2"
-                        />
-                      </label>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-2">
-                        <label className="block text-sm">
-                          <span className="mb-1 block text-zinc-400">From Month</span>
-                          <SearchableSelect
-                            value={periodStartMonth}
-                            onValueChange={setPeriodStartMonth}
-                            includeEmpty={false}
-                            options={monthOptions}
-                            searchPlaceholder="Search month..."
-                            triggerClassName="h-10 w-full rounded-xl border border-white/15 bg-zinc-900 px-3 text-sm text-zinc-100 hover:bg-zinc-900"
-                            popoverContentClassName="z-[1500] border-white/10 bg-zinc-950 text-zinc-100"
-                            listClassName="max-h-[min(260px,40vh)]"
-                          />
-                        </label>
-                        <label className="block text-sm">
-                          <span className="mb-1 block text-zinc-400">To Month</span>
-                          <SearchableSelect
-                            value={periodEndMonth}
-                            onValueChange={setPeriodEndMonth}
-                            includeEmpty={false}
-                            options={monthOptions}
-                            searchPlaceholder="Search month..."
-                            triggerClassName="h-10 w-full rounded-xl border border-white/15 bg-zinc-900 px-3 text-sm text-zinc-100 hover:bg-zinc-900"
-                            popoverContentClassName="z-[1500] border-white/10 bg-zinc-950 text-zinc-100"
-                            listClassName="max-h-[min(260px,40vh)]"
-                          />
-                        </label>
-                      </div>
+              <AnimatePresence>
+                {periodOpen && (
+                  <div
+                    className={cn(
+                      "fixed inset-0 z-[10000]",
+                      isMobile
+                        ? "flex flex-col justify-end p-0"
+                        : "flex items-center justify-center p-4"
                     )}
+                  >
+                    {/* Backdrop */}
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                      onClick={() => !downloadingAll && setPeriodOpen(false)}
+                      aria-hidden="true"
+                    />
 
-                    <div className="flex justify-end gap-2 pt-2">
-                      <Button
+                    {/* Modal Container */}
+                    <motion.div
+                      initial={
+                        isMobile
+                          ? { y: "100%" }
+                          : { opacity: 0, scale: 0.95, y: 16 }
+                      }
+                      animate={
+                        isMobile ? { y: 0 } : { opacity: 1, scale: 1, y: 0 }
+                      }
+                      exit={
+                        isMobile
+                          ? { y: "100%" }
+                          : { opacity: 0, scale: 0.95, y: 16 }
+                      }
+                      transition={
+                        isMobile
+                          ? { type: "spring", damping: 28, stiffness: 280 }
+                          : { type: "spring", damping: 25, stiffness: 320 }
+                      }
+                      className={cn(
+                        "relative z-10 w-full max-h-[90dvh] flex flex-col border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden",
+                        isMobile ? "rounded-t-[28px]" : "max-w-md rounded-3xl"
+                      )}
+                    >
+                      {/* Close Button */}
+                      <button
                         type="button"
-                        variant="secondary"
                         onClick={() => setPeriodOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
                         disabled={downloadingAll}
-                        onClick={() => void downloadAllEmployeesZip()}
-                        className="gap-1.5"
+                        className="absolute top-4 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer transition-colors disabled:opacity-50"
+                        aria-label="Close"
                       >
-                        <Download className="size-4" />
-                        {downloadingAll ? "Preparing..." : "Download ZIP"}
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>,
+                        <X className="size-4" />
+                      </button>
+
+                      {/* Mobile drag handle */}
+                      {isMobile && (
+                        <div className="flex justify-center pt-3 pb-1">
+                          <div className="w-12 h-1.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                        </div>
+                      )}
+
+                      {/* Header */}
+                      <div className="p-5 pb-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                            <Archive className="size-4" />
+                          </div>
+                          <div>
+                            <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                              Batch Export All Staff Attendance
+                            </h3>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                              Downloads an archive containing verified attendance PDF reports for all {users.length} teachers and staff.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Body */}
+                      <div className="p-5 pt-2 space-y-4 overflow-y-auto">
+                        {/* Segmented Mode Toggle */}
+                        <div className="grid grid-cols-2 p-1 bg-zinc-100 dark:bg-white/[0.06] rounded-xl">
+                          <button
+                            type="button"
+                            onClick={() => setPeriodMode("year")}
+                            className={cn(
+                              "py-2 text-xs font-semibold rounded-lg transition-all text-center cursor-pointer",
+                              periodMode === "year"
+                                ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                            )}
+                          >
+                            Full Year
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPeriodMode("range")}
+                            className={cn(
+                              "py-2 text-xs font-semibold rounded-lg transition-all text-center cursor-pointer",
+                              periodMode === "range"
+                                ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                                : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                            )}
+                          >
+                            Custom Range
+                          </button>
+                        </div>
+
+                        {periodMode === "year" ? (
+                          <div>
+                            <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                              Calendar Year
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={periodYear}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                setPeriodYear(val);
+                              }}
+                              onBlur={() => {
+                                if (!periodYear.trim()) {
+                                  setPeriodYear(defaultYear);
+                                }
+                              }}
+                              aria-label="Calendar Year"
+                              title={mode === "bs" ? "Calendar Year (BS)" : "Calendar Year (AD)"}
+                              placeholder={defaultYear}
+                              className="w-full rounded-xl border border-zinc-200 dark:border-white/15 bg-zinc-50 dark:bg-zinc-800/80 px-3.5 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors"
+                            />
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                                From Month
+                              </label>
+                              <AppSelect
+                                value={periodStartMonth}
+                                onChange={setPeriodStartMonth}
+                                options={monthOptions}
+                                drawerTitle="Select From Month"
+                                searchable={monthOptions.length > 4}
+                                searchPlaceholder="Search month..."
+                                placeholder="Select month..."
+                                className="h-11 rounded-xl"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                                To Month
+                              </label>
+                              <AppSelect
+                                value={periodEndMonth}
+                                onChange={setPeriodEndMonth}
+                                options={monthOptions}
+                                drawerTitle="Select To Month"
+                                searchable={monthOptions.length > 4}
+                                searchPlaceholder="Search month..."
+                                placeholder="Select month..."
+                                className="h-11 rounded-xl"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-100 dark:border-white/5">
+                          <button
+                            type="button"
+                            disabled={downloadingAll}
+                            onClick={() => setPeriodOpen(false)}
+                            className="px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-white/10 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white/15 text-xs font-semibold transition-colors cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={downloadingAll}
+                            onClick={() => void downloadAllEmployeesZip()}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-md shadow-blue-500/20 disabled:opacity-50 transition-all active:scale-[0.98] cursor-pointer"
+                          >
+                            {downloadingAll ? (
+                              <>
+                                <Loader2 className="size-3.5 animate-spin" />
+                                <span>Preparing...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download className="size-3.5" />
+                                <span>Download ZIP</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>,
               document.body
             )
           : null}

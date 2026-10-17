@@ -38,6 +38,7 @@ import { AppSelect } from "@/components/ui/app-select";
 import { Separator } from "@/components/ui/separator";
 import { MediaPreviewModal } from "@/components/ui/media-preview-modal";
 import { isPastLateCutoff, checkSignOutTiming } from "@/lib/date/late-check";
+import { TeacherHomeSkeleton } from "@/components/client/dashboard-skeletons";
 
 function formatCheckInTime(raw: any): string {
   if (!raw) return "Today";
@@ -821,31 +822,7 @@ export function TeacherAttendanceHome() {
   };
 
   if (loading) {
-    return (
-      <div className="space-y-6 max-w-5xl mx-auto animate-pulse">
-        {/* Header Skeleton */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-zinc-200/80 bg-white dark:border-white/10 dark:bg-white/[0.02]">
-          <div className="space-y-2">
-            <Skeleton className="h-6 w-48 rounded-lg" />
-            <Skeleton className="h-4 w-72 rounded-lg" />
-          </div>
-          <Skeleton className="h-10 w-36 rounded-xl" />
-        </div>
-
-        {/* Status Card Skeleton */}
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-6 dark:border-white/10 dark:bg-white/[0.02] space-y-5">
-          <div className="flex items-center justify-between">
-            <Skeleton className="h-5 w-32 rounded-lg" />
-            <Skeleton className="h-6 w-24 rounded-full" />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Skeleton className="h-28 rounded-xl" />
-            <Skeleton className="h-28 rounded-xl" />
-          </div>
-          <Skeleton className="h-14 w-full rounded-xl" />
-        </div>
-      </div>
-    );
+    return <TeacherHomeSkeleton />;
   }
 
   const isCheckedIn = data?.isCheckedIn ?? false;

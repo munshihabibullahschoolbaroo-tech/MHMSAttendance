@@ -28,6 +28,8 @@ import {
   XCircle,
   Send,
 } from "lucide-react";
+import { MissedAttendanceContentSkeleton } from "@/components/client/dashboard-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type Assignee = { id: string; name: string; email: string; role: string };
 type Site = { id: string; name: string };
@@ -220,13 +222,6 @@ export function EmployeeManualPunchPanel() {
     }
   };
 
-  if (loadingInitial) {
-    return (
-      <div className="flex min-h-[240px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
-      </div>
-    );
-  }
 
   const renderFormFields = (idPrefix: string) => (
     <>
@@ -304,8 +299,26 @@ export function EmployeeManualPunchPanel() {
   const renderRequestsList = (isModal = false) => {
     if (loadingRequests) {
       return (
-        <div className="flex h-36 items-center justify-center text-zinc-400">
-          <Loader2 className="size-5 animate-spin text-blue-500" />
+        <div className="space-y-3 pb-2 animate-in fade-in duration-200">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div
+              key={i}
+              className="rounded-2xl border border-zinc-200/80 dark:border-white/10 bg-zinc-50/50 dark:bg-white/[0.02] p-4 space-y-3"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-4 w-28 rounded" />
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                </div>
+                <Skeleton className="h-3 w-20 rounded" />
+              </div>
+              <Skeleton className="h-3 w-4/5 rounded" />
+              <div className="flex items-center gap-4 pt-1">
+                <Skeleton className="h-3 w-24 rounded" />
+                <Skeleton className="h-3 w-24 rounded" />
+              </div>
+            </div>
+          ))}
         </div>
       );
     }
@@ -388,6 +401,10 @@ export function EmployeeManualPunchPanel() {
       </div>
     );
   };
+
+  if (loadingInitial) {
+    return <MissedAttendanceContentSkeleton />;
+  }
 
   return (
     <div className="w-full space-y-6">

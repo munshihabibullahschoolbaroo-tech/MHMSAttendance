@@ -146,6 +146,22 @@ export function AdminOnboardingSettings({
     sectionCount: number;
   } | null>(null);
 
+  // Add / Edit / Delete Position states
+  const [addingPositionWingIdx, setAddingPositionWingIdx] = React.useState<number | null>(null);
+  const [newPositionName, setNewPositionName] = React.useState("");
+  const [newPositionLimit, setNewPositionLimit] = React.useState<string>("");
+  const [editingPosition, setEditingPosition] = React.useState<{
+    wingIdx: number;
+    posIdx: number;
+    name: string;
+  } | null>(null);
+  const [deletePositionTarget, setDeletePositionTarget] = React.useState<{
+    wingIdx: number;
+    posIdx: number;
+    wingName: string;
+    positionName: string;
+  } | null>(null);
+
   const handleConfirmResetDefaults = () => {
     setConfig(DEFAULT_SCHOOL_CONFIG);
     toast.info("Reset to default configuration. Click 'Save Changes' to apply.");
@@ -277,6 +293,72 @@ export function AdminOnboardingSettings({
       nextWings[wingIndex] = { ...nextWings[wingIndex], positions: nextPositions };
       return { ...prev, wings: nextWings };
     });
+  };
+
+  const handleConfirmAddPosition = (wingIndex: number) => {
+    const trimmed = newPositionName.trim();
+    if (!trimmed) {
+      toast.error("Please enter a position title");
+      return;
+    }
+    const targetWing = config.wings[wingIndex];
+    if (targetWing?.positions.some((p) => p.name.toLowerCase() === trimmed.toLowerCase())) {
+      toast.warning(`Position "${trimmed}" already exists in ${targetWing.name}`);
+      return;
+    }
+    const maxLimitNum = newPositionLimit.trim() ? parseInt(newPositionLimit, 10) : undefined;
+    const cleanId =
+      trimmed.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") ||
+      `pos_${Date.now()}`;
+
+    setConfig((prev) => {
+      const nextWings = [...prev.wings];
+      const nextPositions = [
+        ...nextWings[wingIndex].positions,
+        {
+          id: cleanId,
+          name: trimmed,
+          maxLimit: maxLimitNum && maxLimitNum > 0 ? maxLimitNum : undefined,
+        },
+      ];
+      nextWings[wingIndex] = { ...nextWings[wingIndex], positions: nextPositions };
+      return { ...prev, wings: nextWings };
+    });
+
+    setNewPositionName("");
+    setNewPositionLimit("");
+    setAddingPositionWingIdx(null);
+    toast.success(`Added position "${trimmed}" to ${targetWing?.name ?? "wing"}. Click "Save Changes" to apply.`);
+  };
+
+  const handleRemovePositionFromWing = (wingIndex: number, posIndex: number) => {
+    const targetWing = config.wings[wingIndex];
+    const pos = targetWing?.positions[posIndex];
+    if (!pos) return;
+    setConfig((prev) => {
+      const nextWings = [...prev.wings];
+      const nextPositions = nextWings[wingIndex].positions.filter((_, idx) => idx !== posIndex);
+      nextWings[wingIndex] = { ...nextWings[wingIndex], positions: nextPositions };
+      return { ...prev, wings: nextWings };
+    });
+    toast.info(`Removed position "${pos.name}" from ${targetWing?.name ?? "wing"}. Click "Save Changes" to apply.`);
+  };
+
+  const handleSaveEditedPositionName = (wingIndex: number, posIndex: number, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setConfig((prev) => {
+      const nextWings = [...prev.wings];
+      const nextPositions = [...nextWings[wingIndex].positions];
+      nextPositions[posIndex] = {
+        ...nextPositions[posIndex],
+        name: trimmed,
+      };
+      nextWings[wingIndex] = { ...nextWings[wingIndex], positions: nextPositions };
+      return { ...prev, wings: nextWings };
+    });
+    setEditingPosition(null);
+    toast.success(`Renamed position to "${trimmed}". Click "Save Changes" to apply.`);
   };
 
   const handleAddClassToWing = (wingIndex: number, className: string) => {
@@ -1229,36 +1311,204 @@ export function AdminOnboardingSettings({
               </CardHeader>
               <CardContent className="space-y-4 flex-1 text-xs">
                 {/* Positions with limits */}
-                <div>
-                  <h5 className="font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
-                    Positions & Max Limits
-                  </h5>
-                  <div className="space-y-2">
-                    {wing.positions.map((pos, posIdx) => (
-                      <div
-                        key={pos.id}
-                        className="flex items-center justify-between gap-2 p-2 rounded-lg border border-zinc-200/80 bg-zinc-50 dark:border-white/5 dark:bg-white/[0.02]"
-                      >
-                        <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                          {pos.name}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-zinc-400">Max:</span>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h5 className="font-semibold text-zinc-700 dark:text-zinc-300">
+                      Positions &amp; Max Limits ({wing.positions.length})
+                    </h5>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (addingPositionWingIdx === wingIdx) {
+                          setAddingPositionWingIdx(null);
+                        } else {
+                          setAddingPositionWingIdx(wingIdx);
+                          setNewPositionName("");
+                          setNewPositionLimit("");
+                        }
+                      }}
+                      className="h-6 px-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40 gap-1 cursor-pointer"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Add Position
+                    </Button>
+                  </div>
+
+                  {/* Inline Add Position Form */}
+                  {addingPositionWingIdx === wingIdx && (
+                    <div className="p-2.5 rounded-lg border border-blue-200 bg-blue-50/60 dark:border-blue-900/40 dark:bg-blue-950/20 space-y-2 animate-in fade-in duration-200">
+                      <div className="text-[11px] font-bold text-blue-700 dark:text-blue-300 flex items-center justify-between">
+                        <span>New Position for {wing.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setAddingPositionWingIdx(null)}
+                          className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="sm:col-span-2">
+                          <input
+                            type="text"
+                            placeholder="Title (e.g. Lab Assistant)"
+                            value={newPositionName}
+                            onChange={(e) => setNewPositionName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleConfirmAddPosition(wingIdx);
+                              }
+                            }}
+                            className="w-full h-7 px-2 rounded border border-zinc-300 dark:border-white/15 bg-white dark:bg-zinc-900 text-xs text-zinc-900 dark:text-zinc-100"
+                            autoFocus
+                          />
+                        </div>
+                        <div>
                           <input
                             type="number"
                             min="1"
                             max="50"
-                            placeholder="∞"
-                            value={pos.maxLimit ?? ""}
-                            onChange={(e) => {
-                              const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
-                              handleUpdatePositionLimit(wingIdx, posIdx, val);
+                            placeholder="Max (∞)"
+                            value={newPositionLimit}
+                            onChange={(e) => setNewPositionLimit(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleConfirmAddPosition(wingIdx);
+                              }
                             }}
-                            className="w-12 h-7 rounded border border-zinc-300 dark:border-white/15 bg-white dark:bg-zinc-900 text-center text-xs font-semibold"
+                            className="w-full h-7 px-1.5 rounded border border-zinc-300 dark:border-white/15 bg-white dark:bg-zinc-900 text-center text-xs text-zinc-900 dark:text-zinc-100 font-semibold"
+                            title="Optional maximum faculty cap. Leave blank for unlimited."
                           />
                         </div>
                       </div>
-                    ))}
+                      <div className="flex items-center justify-end gap-1.5 pt-0.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setAddingPositionWingIdx(null)}
+                          className="h-6 px-2 text-[11px] text-zinc-500 hover:text-zinc-700 cursor-pointer"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => handleConfirmAddPosition(wingIdx)}
+                          className="h-6 px-2.5 text-[11px] bg-blue-600 hover:bg-blue-700 text-white font-medium cursor-pointer shadow-xs"
+                        >
+                          Add
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* List of positions */}
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
+                    {wing.positions.length === 0 ? (
+                      <div className="text-center py-3 border border-dashed border-zinc-200 dark:border-white/10 rounded-lg text-zinc-400 text-xs italic">
+                        No positions configured. Click &ldquo;Add Position&rdquo; above.
+                      </div>
+                    ) : (
+                      wing.positions.map((pos, posIdx) => (
+                        <div
+                          key={pos.id || `${pos.name}-${posIdx}`}
+                          className="flex items-center justify-between gap-2 p-1.5 rounded-lg border border-zinc-200/80 bg-zinc-50 dark:border-white/5 dark:bg-white/[0.02] hover:border-zinc-300 dark:hover:border-white/15 transition-colors"
+                        >
+                          {editingPosition?.wingIdx === wingIdx && editingPosition?.posIdx === posIdx ? (
+                            <div className="flex items-center gap-1 flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={editingPosition.name}
+                                onChange={(e) =>
+                                  setEditingPosition({ ...editingPosition, name: e.target.value })
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleSaveEditedPositionName(wingIdx, posIdx, editingPosition.name);
+                                  } else if (e.key === "Escape") {
+                                    setEditingPosition(null);
+                                  }
+                                }}
+                                className="h-6 px-1.5 rounded border border-blue-400 bg-white dark:bg-zinc-900 text-xs flex-1 min-w-0 text-zinc-900 dark:text-zinc-100"
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleSaveEditedPositionName(wingIdx, posIdx, editingPosition.name)
+                                }
+                                className="p-1 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
+                                title="Save name"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingPosition(null)}
+                                className="p-1 rounded text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
+                                title="Cancel"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                              <span className="font-medium text-zinc-800 dark:text-zinc-200 truncate text-xs">
+                                {pos.name}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditingPosition({ wingIdx, posIdx, name: pos.name })
+                                }
+                                className="p-0.5 rounded text-zinc-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
+                                title={`Rename ${pos.name}`}
+                              >
+                                <Pencil className="h-2.5 w-2.5" />
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[10px] text-zinc-400">Max:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="50"
+                              placeholder="∞"
+                              value={pos.maxLimit ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                                handleUpdatePositionLimit(wingIdx, posIdx, val);
+                              }}
+                              className="w-11 h-6 rounded border border-zinc-300 dark:border-white/15 bg-white dark:bg-zinc-900 text-center text-xs font-semibold"
+                              title="Maximum allowed faculty with this position (blank for unlimited ∞)"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDeletePositionTarget({
+                                  wingIdx,
+                                  posIdx,
+                                  wingName: wing.name,
+                                  positionName: pos.name,
+                                })
+                              }
+                              className="p-1 rounded text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
+                              title={`Delete ${pos.name} position`}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
 
@@ -1348,6 +1598,31 @@ export function AdminOnboardingSettings({
           </span>
         }
         confirmText="Remove Class"
+        cancelText="Cancel"
+        variant="danger"
+      />
+
+      {/* Danger Zone: Remove Position from Wing */}
+      <DangerConfirmModal
+        open={Boolean(deletePositionTarget)}
+        onClose={() => setDeletePositionTarget(null)}
+        onConfirm={() => {
+          if (!deletePositionTarget) return;
+          handleRemovePositionFromWing(deletePositionTarget.wingIdx, deletePositionTarget.posIdx);
+          setDeletePositionTarget(null);
+        }}
+        title="Delete Position"
+        subtitle="Remove position from wing"
+        description={
+          <span>
+            Are you sure you want to permanently delete the position{" "}
+            <strong className="text-zinc-900 dark:text-white font-semibold">
+              &ldquo;{deletePositionTarget?.positionName}&rdquo;
+            </strong>{" "}
+            from <strong>{deletePositionTarget?.wingName}</strong>? Staff onboarding will no longer be able to select this position. Remember to click &ldquo;Save Changes&rdquo; to apply.
+          </span>
+        }
+        confirmText="Delete Position"
         cancelText="Cancel"
         variant="danger"
       />

@@ -15,6 +15,24 @@ export function DashboardChrome({ children }: { children: React.ReactNode }) {
   const { user, loading } = useDashboardUser();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [isCollapsed, setIsCollapsed] = React.useState(false);
+  const [isNavigating, setIsNavigating] = React.useState(false);
+
+  // When pathname changes, finish the top navigation indicator
+  React.useEffect(() => {
+    setIsNavigating(false);
+  }, [pathname]);
+
+  // Listen to custom navigation start event triggered across the app
+  React.useEffect(() => {
+    const handleStart = () => setIsNavigating(true);
+    const handleEnd = () => setIsNavigating(false);
+    window.addEventListener("mhms-nav-start", handleStart);
+    window.addEventListener("mhms-nav-end", handleEnd);
+    return () => {
+      window.removeEventListener("mhms-nav-start", handleStart);
+      window.removeEventListener("mhms-nav-end", handleEnd);
+    };
+  }, []);
 
   React.useEffect(() => {
     // Check saved user preference first
@@ -52,7 +70,13 @@ export function DashboardChrome({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-[100dvh] min-h-0 w-full overflow-hidden bg-background text-foreground">
+    <div className="flex h-[100dvh] min-h-0 w-full overflow-hidden bg-background text-foreground relative">
+      {/* Top Navigation Loading Bar for instant visual feedback on page transition */}
+      {isNavigating && (
+        <div className="absolute top-0 left-0 right-0 z-[99999] h-1 bg-transparent overflow-hidden">
+          <div className="h-full w-full bg-gradient-to-r from-blue-600 via-cyan-400 to-indigo-600 animate-pulse origin-left" />
+        </div>
+      )}
       <DashboardSidebar
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}

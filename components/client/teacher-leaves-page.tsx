@@ -36,6 +36,7 @@ import { Separator } from "@/components/ui/separator";
 import { calculateCasualLeaveQuota } from "@/lib/school/leave-quota";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
 import { MediaPreviewModal } from "@/components/ui/media-preview-modal";
+import { StaffLeavesSkeleton } from "@/components/client/dashboard-skeletons";
 
 type LeaveRecord = {
   id: string;
@@ -322,6 +323,10 @@ export function TeacherLeavesPage() {
       setSubmitting(false);
     }
   };
+
+  if (loading) {
+    return <StaffLeavesSkeleton />;
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-3 sm:p-6 md:p-8">

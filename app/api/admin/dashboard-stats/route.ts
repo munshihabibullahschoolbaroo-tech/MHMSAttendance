@@ -25,58 +25,113 @@ export async function GET(req: Request) {
   const db = adminDb();
   const viewerTz = timeZoneFromUserSnapshot(await db.collection("users").doc(decoded.uid).get());
   const day = calendarDateKeyInTimeZone(new Date(), viewerTz);
-  const now = new Date().getTime();
 
-  const [attendanceSnap, liveSnap] = await Promise.all([
+  // Fetch canonical MHMS teacherSessions, legacy/fallback attendance, and school config in parallel
+  const [teacherSessionsSnap, attendanceSnap, config] = await Promise.all([
+    db.collection("teacherSessions").where("date", "==", day).get(),
     db.collection("attendance").where("date", "==", day).get(),
-    db.collection("live_tracking").get(),
+    getSchoolConfig(db),
   ]);
 
-  const attendanceDocs = attendanceSnap.docs.map((d) => d.data() as AttendanceDoc);
-
-  const totalCheckIns = attendanceDocs.length;
-  const completed = attendanceDocs.filter((d) => d.checkOut != null).length;
-  const pending = attendanceDocs.filter(
-    (d) => d.checkIn != null && d.checkOut == null
-  ).length;
-
-  const config = await getSchoolConfig(db);
   const cutoffMinutes = parseAmTimeMinutes(config.teacherLateTime || "09:00 AM");
   const cutoffHour = Math.floor(cutoffMinutes / 60);
   const cutoffMinute = cutoffMinutes % 60;
 
-  const lateArrivals = attendanceDocs.filter((d: any) => {
-    if (d.isLate === true || d.lateArrival === true) return true;
-    const t = d.checkIn?.time;
-    if (!t) return false;
-    const ms =
-      t && typeof t.toMillis === "function"
-        ? t.toMillis()
-        : t && typeof t.seconds === "number"
-          ? t.seconds * 1000
-          : null;
-    if (ms == null) return false;
-    const local = DateTime.fromMillis(ms, { zone: "utc" }).setZone(viewerTz);
-    return local.hour > cutoffHour || (local.hour === cutoffHour && local.minute > cutoffMinute);
-  }).length;
+  // Merge records by workerId to prevent double counting
+  const recordsMap = new Map<string, any>();
 
-  const activeWithinMs = 2 * 60 * 1000;
-  type LiveDoc = {
-    lastUpdated?: { toMillis?: () => number; seconds?: number } | null;
-  };
+  for (const doc of teacherSessionsSnap.docs) {
+    const d = doc.data();
+    const workerId = (d.teacherId as string) || doc.id.split("_")[0];
+    if (workerId) {
+      recordsMap.set(workerId, { ...d, workerId });
+    }
+  }
 
-  const liveDocs = liveSnap.docs.map((d) => d.data() as LiveDoc);
-  const activeWorkers = liveDocs.filter((d) => {
-    const t = d.lastUpdated;
-    const ms =
-      t && typeof t.toMillis === "function"
-        ? t.toMillis()
-        : t && typeof t.seconds === "number"
-          ? t.seconds * 1000
-          : null;
-    if (ms == null) return false;
-    return now - ms <= activeWithinMs;
-  }).length;
+  for (const doc of attendanceSnap.docs) {
+    const d = doc.data();
+    const workerId = (d.workerId as string) || doc.id.split("_")[0];
+    if (workerId && !recordsMap.has(workerId)) {
+      recordsMap.set(workerId, { ...d, workerId });
+    }
+  }
+
+  const allRecords = Array.from(recordsMap.values());
+
+  let totalCheckIns = 0;
+  let completed = 0;
+  let pending = 0;
+  let activeWorkers = 0;
+  let lateArrivals = 0;
+
+  for (const r of allRecords) {
+    const hasCheckIn = !!(
+      r.checkInTime ||
+      r.checkIn?.time ||
+      r.status === "present" ||
+      r.status === "checked_out"
+    );
+
+    const hasCheckOut = !!(
+      r.checkOutTime ||
+      r.checkOut?.time ||
+      r.status === "checked_out"
+    );
+
+    if (hasCheckIn) {
+      totalCheckIns++;
+    }
+
+    if (hasCheckIn && hasCheckOut) {
+      completed++;
+    }
+
+    // In-session / Pending checkout
+    const isCurrentlyInSchool = hasCheckIn && !hasCheckOut && r.status !== "absent";
+    if (isCurrentlyInSchool) {
+      pending++;
+
+      // Active on campus: within geofence and not departed on active emergency leave
+      const isAwayOnEmergency =
+        r.emergencyLeave &&
+        r.emergencyLeave.active === true &&
+        r.emergencyLeave.status !== "rejected";
+
+      if (!isAwayOnEmergency) {
+        activeWorkers++;
+      }
+    }
+
+    // Late arrival check
+    let isLate = r.isLate === true || r.lateArrival === true;
+    if (!isLate && hasCheckIn) {
+      const rawTime = r.checkInTime || r.checkIn?.time;
+      let ms: number | null = null;
+      if (rawTime && typeof rawTime.toMillis === "function") {
+        ms = rawTime.toMillis();
+      } else if (rawTime && typeof rawTime.seconds === "number") {
+        ms = rawTime.seconds * 1000;
+      } else if (rawTime && typeof rawTime._seconds === "number") {
+        ms = rawTime._seconds * 1000;
+      } else if (typeof rawTime === "number") {
+        ms = rawTime > 1e11 ? rawTime : rawTime * 1000;
+      } else if (typeof rawTime === "string") {
+        const p = Date.parse(rawTime);
+        if (!isNaN(p)) ms = p;
+      }
+
+      if (ms != null) {
+        const local = DateTime.fromMillis(ms, { zone: "utc" }).setZone(viewerTz);
+        if (local.hour > cutoffHour || (local.hour === cutoffHour && local.minute > cutoffMinute)) {
+          isLate = true;
+        }
+      }
+    }
+
+    if (isLate) {
+      lateArrivals++;
+    }
+  }
 
   const completionRate =
     totalCheckIns === 0 ? 0 : Math.round((completed / totalCheckIns) * 100);
@@ -88,5 +143,6 @@ export async function GET(req: Request) {
     pending,
     lateArrivals,
     completionRate,
+    date: day,
   });
 }

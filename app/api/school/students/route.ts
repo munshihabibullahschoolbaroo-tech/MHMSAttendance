@@ -25,6 +25,16 @@ const defaultSampleNames = [
   "Sakina Banoo",
 ];
 
+const rosterMemoryCache = new Map<string, { students: any[]; expiresAt: number }>();
+
+function invalidateStudentRosterCache(classId?: string, sectionId?: string) {
+  if (classId && sectionId) {
+    rosterMemoryCache.delete(`${classId}__${sectionId}`);
+  } else {
+    rosterMemoryCache.clear();
+  }
+}
+
 export async function GET(req: Request) {
   const auth = await requireBearerUser(req);
   if (!auth.ok) return auth.response;
@@ -33,22 +43,20 @@ export async function GET(req: Request) {
   const classId = url.searchParams.get("classId");
   const sectionId = url.searchParams.get("sectionId") || "Section A";
   const wingId = url.searchParams.get("wingId") || "higher";
+  const skipCache = url.searchParams.get("fresh") === "1";
 
   if (!classId) {
     return jsonError("classId parameter is required", 400);
   }
 
+  const cacheKey = `${classId}__${sectionId}`;
+  const now = Date.now();
+  const cachedRoster = rosterMemoryCache.get(cacheKey);
+
   const db = adminDb();
 
-  // Kick off students fetch immediately in parallel with authorization checks
-  const studentsPromise = db
-    .collection("students")
-    .where("classId", "==", classId)
-    .where("sectionId", "==", sectionId)
-    .get();
-
-  // Validate teacher authorization to access this class roster
   const isAdmin = await isRequestAdmin(auth.decoded);
+  let canMark = isAdmin;
 
   if (!isAdmin) {
     const cleanClass = classId.replace(/\s+/g, "_");
@@ -72,9 +80,10 @@ export async function GET(req: Request) {
       delegation?.active === true &&
       delegation?.substituteTeacherId === auth.decoded.uid;
 
-    if (!isAssigned && !isSubstitute) {
-      const now = new Date();
-      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    if (isAssigned || isSubstitute) {
+      canMark = true;
+    } else {
+      const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-${String(new Date().getDate()).padStart(2, "0")}`;
       const switchSnap = await db
         .collection("classSwitchRequests")
         .where("teacherId", "==", auth.decoded.uid)
@@ -84,20 +93,29 @@ export async function GET(req: Request) {
         .where("status", "==", "approved")
         .limit(1)
         .get();
-      const hasApprovedSwitch = !switchSnap.empty;
-
-      if (!hasApprovedSwitch) {
-        return jsonError(
-          `Access restricted. ${classId} (${sectionId}) is locked. You must submit a Class Switch Request to view or take attendance for this class.`,
-          403
-        );
-      }
+      canMark = !switchSnap.empty;
     }
+  }
+
+  // Fast-path: return cached roster in < 1ms
+  if (!skipCache && cachedRoster && now < cachedRoster.expiresAt) {
+    return NextResponse.json(
+      { students: cachedRoster.students, canMark },
+      {
+        headers: {
+          "Cache-Control": "private, max-age=15, stale-while-revalidate=60",
+        },
+      }
+    );
   }
 
   let snap;
   try {
-    snap = await studentsPromise;
+    snap = await db
+      .collection("students")
+      .where("classId", "==", classId)
+      .where("sectionId", "==", sectionId)
+      .get();
   } catch (e) {
     console.error("[students GET]", e);
     snap = { docs: [] } as any;
@@ -106,11 +124,13 @@ export async function GET(req: Request) {
   const students = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
   students.sort((a: any, b: any) => (Number(a.rollNo) || 0) - (Number(b.rollNo) || 0));
 
+  rosterMemoryCache.set(cacheKey, { students, expiresAt: now + 30_000 });
+
   return NextResponse.json(
-    { students },
+    { students, canMark },
     {
       headers: {
-        "Cache-Control": "private, max-age=10, stale-while-revalidate=60",
+        "Cache-Control": "private, max-age=15, stale-while-revalidate=60",
       },
     }
   );
@@ -160,6 +180,8 @@ export async function POST(req: Request) {
     createdAt: new Date(),
   });
 
+  invalidateStudentRosterCache(parsed.data.classId, parsed.data.sectionId);
+
   return NextResponse.json({ ok: true, student: { id: ref.id, ...parsed.data } });
 }
 
@@ -192,5 +214,6 @@ export async function DELETE(req: Request) {
   }
 
   await studentRef.delete();
+  invalidateStudentRosterCache(studentData.classId, studentData.sectionId);
   return NextResponse.json({ ok: true, deletedId: id });
 }

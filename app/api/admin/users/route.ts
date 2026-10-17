@@ -31,7 +31,10 @@ export async function GET(req: Request) {
       : (cachedUsers as Array<{ email: string; role: string }>).filter(
           (u) => !isSuperAdminUserRow(u.email, u.role)
         );
-    return NextResponse.json({ users });
+    return NextResponse.json(
+      { users },
+      { headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=120" } }
+    );
   }
 
   try {
@@ -155,7 +158,10 @@ export async function GET(req: Request) {
       ? allUsers
       : allUsers.filter((u: any) => !isSuperAdminUserRow(u.email, u.role));
 
-    return NextResponse.json({ users });
+    return NextResponse.json(
+      { users },
+      { headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=120" } }
+    );
   } catch {
     // Quota exceeded or Firestore unavailable — serve stale cache if available
     const stale = getUsersCache();

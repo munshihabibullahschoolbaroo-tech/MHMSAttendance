@@ -89,6 +89,10 @@ type Props = {
 const rosterCache = new Map<string, Student[]>();
 const attendanceRecordCache = new Map<string, { map: Record<string, RecordStatus>; saved: boolean }>();
 
+// Global memory cache for school faculty to prevent re-fetching and loading spinner delays
+let globalCachedFaculty: FacultyMember[] | null = null;
+let globalFacultyCachedAt = 0;
+
 export function StudentAttendanceBoard({
   classId,
   sectionId,
@@ -109,15 +113,16 @@ export function StudentAttendanceBoard({
   const [alreadySaved, setAlreadySaved] = React.useState(false);
   const [isLocked, setIsLocked] = React.useState(false);
   const [lockMessage, setLockMessage] = React.useState("");
+  const [canMark, setCanMark] = React.useState<boolean>(true);
 
   React.useEffect(() => {
     onSubmittedChange?.(alreadySaved);
   }, [alreadySaved, onSubmittedChange]);
 
-  // Substitute teacher delegation state
+  // Substitute teacher delegation state - instantly initialized from global memory cache
   const [delegation, setDelegation] = React.useState<SubstituteDelegation | null>(null);
   const [isSubModalOpen, setIsSubModalOpen] = React.useState(false);
-  const [facultyList, setFacultyList] = React.useState<FacultyMember[]>([]);
+  const [facultyList, setFacultyList] = React.useState<FacultyMember[]>(() => globalCachedFaculty ?? []);
   const [loadingFaculty, setLoadingFaculty] = React.useState(false);
   const [submittingDelegation, setSubmittingDelegation] = React.useState(false);
   const [revokingDelegation, setRevokingDelegation] = React.useState(false);
@@ -187,7 +192,7 @@ export function StudentAttendanceBoard({
 
   const isFuture = todayStr > realTodayStr;
   const isPast = todayStr < realTodayStr;
-  const effectiveReadOnly = readOnly || isPast;
+  const effectiveReadOnly = readOnly || isPast || (!isAdmin && !canMark);
 
   // Load active substitute delegation for this class
   const loadDelegation = React.useCallback(async () => {
@@ -220,10 +225,8 @@ export function StudentAttendanceBoard({
   const currentUid = getFirebaseAuth().currentUser?.uid;
   const isSubstituteForThisClass = Boolean(delegation?.active && delegation.substituteTeacherId === currentUid);
 
-  const openSubstituteModal = async () => {
-    setIsSubModalOpen(true);
-    setDelegationStartDate(todayStr);
-    setLoadingFaculty(true);
+  const fetchFacultyData = React.useCallback(async (showLoading = false) => {
+    if (showLoading) setLoadingFaculty(true);
     try {
       const auth = getFirebaseAuth();
       const u = auth.currentUser;
@@ -247,7 +250,7 @@ export function StudentAttendanceBoard({
         blockedTeacherIds.add(u.uid);
 
         if (coveragesRes.ok) {
-          const covJson = await coveragesRes.json();
+          const covJson = await coveragesRes.json().catch(() => ({}));
           if (Array.isArray(covJson.delegations)) {
             covJson.delegations.forEach((d: { permanentTeacherId?: string }) => {
               if (d.permanentTeacherId) blockedTeacherIds.add(d.permanentTeacherId);
@@ -256,17 +259,42 @@ export function StudentAttendanceBoard({
         }
 
         const filtered = teachers.filter((t) => !blockedTeacherIds.has(t.id));
+        globalCachedFaculty = filtered;
+        globalFacultyCachedAt = Date.now();
         setFacultyList(filtered);
         if (filtered.length > 0) {
-          if (!substituteTeacherId || blockedTeacherIds.has(substituteTeacherId)) {
-            setSubstituteTeacherId(filtered[0]!.id);
-          }
+          setSubstituteTeacherId((prev) => (!prev || blockedTeacherIds.has(prev) ? filtered[0]!.id : prev));
         }
       }
     } catch {
-      toast.error("Failed to load teachers list");
+      if (showLoading) {
+        toast.error("Failed to load teachers list");
+      }
     } finally {
-      setLoadingFaculty(false);
+      if (showLoading) setLoadingFaculty(false);
+    }
+  }, []);
+
+  // Prefetch faculty eagerly on board mount so dropdown opens with 0ms delay
+  React.useEffect(() => {
+    if (!globalCachedFaculty || Date.now() - globalFacultyCachedAt > 30_000) {
+      void fetchFacultyData(false);
+    }
+  }, [fetchFacultyData]);
+
+  const openSubstituteModal = async () => {
+    setIsSubModalOpen(true);
+    setDelegationStartDate(todayStr);
+
+    // If faculty is already cached, show immediately with zero spinner delay!
+    if (facultyList.length > 0 || (globalCachedFaculty && globalCachedFaculty.length > 0)) {
+      if (facultyList.length === 0 && globalCachedFaculty) {
+        setFacultyList(globalCachedFaculty);
+      }
+      // Silently refresh in background
+      void fetchFacultyData(false);
+    } else {
+      void fetchFacultyData(true);
     }
   };
 
@@ -403,7 +431,11 @@ export function StudentAttendanceBoard({
           }),
         ]);
 
-        const dataSt = (await resSt.json().catch(() => ({}))) as { students?: Student[]; error?: string };
+        const dataSt = (await resSt.json().catch(() => ({}))) as {
+          students?: Student[];
+          canMark?: boolean;
+          error?: string;
+        };
         if (!resSt.ok) {
           if (resSt.status === 403 && !isAdmin) {
             if (!cancelled) {
@@ -418,6 +450,7 @@ export function StudentAttendanceBoard({
         const roster = dataSt.students ?? [];
         if (cancelled) return;
         setStudents(roster);
+        setCanMark(isAdmin || dataSt.canMark !== false);
         rosterCache.set(cacheKey, roster);
 
         // Process Attendance
@@ -912,14 +945,16 @@ export function StudentAttendanceBoard({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-zinc-100/80 dark:bg-zinc-900/60 border border-zinc-200 dark:border-white/10 text-xs">
             <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-300">
               <span className="font-bold text-zinc-800 dark:text-zinc-100">
-                {isPast ? `Past Record (${todayStr})` : "View-Only"}:
+                {isPast ? `Past Record (${todayStr})` : !canMark ? "View-Only Roster" : "View-Only"}:
               </span>
               <span className="text-zinc-500 dark:text-zinc-400">
                 {isPast
                   ? alreadySaved
                     ? "Historical attendance is locked in view-only mode. Only today's attendance can be marked or edited."
                     : "No attendance was recorded for this date. All students are unmarked because roll call was not submitted."
-                  : "Editing is disabled for this record."}
+                  : !canMark
+                    ? "You are viewing this class roster in read-only mode. To submit attendance for this class, request a class switch."
+                    : "Editing is disabled for this record."}
               </span>
             </div>
             <span className="inline-flex items-center gap-1 self-start sm:self-auto text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-zinc-200/80 dark:bg-white/10 text-zinc-700 dark:text-zinc-300">

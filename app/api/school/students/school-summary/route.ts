@@ -3,7 +3,7 @@ import { requireBearerUser } from "@/lib/auth/verify-request";
 import { isRequestAdmin } from "@/lib/auth/require-admin";
 import { adminDb } from "@/lib/firebase/admin";
 import { jsonError } from "@/lib/api/json-error";
-import { DEFAULT_SCHOOL_CONFIG, SchoolConfig, getSectionsForClass } from "@/lib/school/config";
+import { DEFAULT_SCHOOL_CONFIG, SchoolConfig, getSchoolConfig, getSectionsForClass } from "@/lib/school/config";
 
 export const runtime = "nodejs";
 
@@ -49,6 +49,13 @@ export interface SchoolAttendanceSummaryResponse {
   classSummaries: ClassAttendanceSummary[];
 }
 
+const summaryCache = new Map<string, { data: SchoolAttendanceSummaryResponse; expiresAt: number }>();
+
+function invalidateSchoolSummaryCache(date?: string) {
+  if (date) summaryCache.delete(date);
+  else summaryCache.clear();
+}
+
 export async function GET(req: Request) {
   const auth = await requireBearerUser(req);
   if (!auth.ok) return auth.response;
@@ -62,19 +69,19 @@ export async function GET(req: Request) {
   const now = new Date();
   const defaultDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const date = url.searchParams.get("date") || defaultDate;
+  const skipCache = url.searchParams.get("fresh") === "1";
+
+  const cached = summaryCache.get(date);
+  if (!skipCache && cached && Date.now() < cached.expiresAt) {
+    return NextResponse.json(cached.data, {
+      headers: { "Cache-Control": "private, max-age=15, stale-while-revalidate=60" },
+    });
+  }
 
   const db = adminDb();
 
-  // 1. Get school config
-  let config: SchoolConfig = DEFAULT_SCHOOL_CONFIG;
-  try {
-    const configSnap = await db.collection("schoolConfig").doc("global").get();
-    if (configSnap.exists) {
-      config = { ...DEFAULT_SCHOOL_CONFIG, ...(configSnap.data() as Partial<SchoolConfig>) };
-    }
-  } catch {
-    config = DEFAULT_SCHOOL_CONFIG;
-  }
+  // 1. Get school config using cached helper
+  const config: SchoolConfig = await getSchoolConfig(db);
 
   // 2. Fetch all student documents to count roster sizes per class & section
   const studentCountMap: Record<string, number> = {};
@@ -219,5 +226,9 @@ export async function GET(req: Request) {
     classSummaries: allClassSummaries,
   };
 
-  return NextResponse.json(result);
+  summaryCache.set(date, { data: result, expiresAt: Date.now() + 30_000 });
+
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": "private, max-age=15, stale-while-revalidate=60" },
+  });
 }

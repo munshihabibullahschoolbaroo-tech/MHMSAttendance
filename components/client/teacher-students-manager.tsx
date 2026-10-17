@@ -38,6 +38,7 @@ import { getFirebaseAuth } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Separator } from "@/components/ui/separator";
+import { StudentAttendanceSkeleton } from "@/components/client/dashboard-skeletons";
 
 type MonthAttendanceSummary = {
   date: string;
@@ -51,7 +52,7 @@ type MonthAttendanceSummary = {
 };
 
 export function TeacherStudentsManager() {
-  const { user } = useDashboardUser();
+  const { user, loading: userLoading } = useDashboardUser();
   const [config, setConfig] = React.useState<SchoolConfig>(DEFAULT_SCHOOL_CONFIG);
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
@@ -782,6 +783,10 @@ export function TeacherStudentsManager() {
   const handleNextMonth = () => {
     setCurrentMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
   };
+
+  if (userLoading) {
+    return <StudentAttendanceSkeleton />;
+  }
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">

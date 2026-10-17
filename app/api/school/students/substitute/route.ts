@@ -38,7 +38,10 @@ export async function GET(req: Request) {
       .get();
 
     const delegations = snap.docs.map((d) => d.data());
-    return NextResponse.json({ ok: true, delegations });
+    return NextResponse.json(
+      { ok: true, delegations },
+      { headers: { "Cache-Control": "private, max-age=15, stale-while-revalidate=60" } }
+    );
   }
 
   if (!classId || !sectionId) {
@@ -52,16 +55,22 @@ export async function GET(req: Request) {
   const snap = await db.collection("classTeacherDelegations").doc(docId).get();
 
   if (!snap.exists) {
-    return NextResponse.json({ ok: true, active: false, delegation: null });
+    return NextResponse.json(
+      { ok: true, active: false, delegation: null },
+      { headers: { "Cache-Control": "private, max-age=15, stale-while-revalidate=60" } }
+    );
   }
 
   const data = snap.data();
   const isActive = data?.active === true;
-  return NextResponse.json({
-    ok: true,
-    active: isActive,
-    delegation: isActive ? data : null,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+      active: isActive,
+      delegation: isActive ? data : null,
+    },
+    { headers: { "Cache-Control": "private, max-age=15, stale-while-revalidate=60" } }
+  );
 }
 
 /** POST /api/school/students/substitute - Assign a colleague as substitute class teacher */

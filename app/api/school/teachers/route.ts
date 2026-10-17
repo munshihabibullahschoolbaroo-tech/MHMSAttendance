@@ -5,9 +5,28 @@ import { jsonError } from "@/lib/api/json-error";
 
 export const runtime = "nodejs";
 
+let cachedTeachers: any[] | null = null;
+let cachedTeachersExpiresAt = 0;
+
+function invalidateTeachersCache() {
+  cachedTeachers = null;
+  cachedTeachersExpiresAt = 0;
+}
+
 export async function GET(req: Request) {
   const auth = await requireBearerUser(req);
   if (!auth.ok) return auth.response;
+
+  const url = new URL(req.url);
+  const skipCache = url.searchParams.get("fresh") === "1";
+  const now = Date.now();
+
+  if (!skipCache && cachedTeachers && now < cachedTeachersExpiresAt) {
+    return NextResponse.json(
+      { ok: true, teachers: cachedTeachers },
+      { headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=120" } }
+    );
+  }
 
   try {
     const db = adminDb();
@@ -56,7 +75,13 @@ export async function GET(req: Request) {
       a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
     );
 
-    return NextResponse.json({ ok: true, teachers });
+    cachedTeachers = teachers;
+    cachedTeachersExpiresAt = Date.now() + 60_000;
+
+    return NextResponse.json(
+      { ok: true, teachers },
+      { headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=120" } }
+    );
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Failed to load teachers", 500);
   }

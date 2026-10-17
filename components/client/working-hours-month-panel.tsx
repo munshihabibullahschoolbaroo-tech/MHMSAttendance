@@ -41,7 +41,11 @@ import {
   Download,
   AlertCircle,
   Coffee,
+  X,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { AppSelect } from "@/components/ui/app-select";
+import { WorkingHoursSkeleton } from "@/components/client/dashboard-skeletons";
 
 type DayRow = {
   day: string;
@@ -155,16 +159,15 @@ export function WorkingHoursMonthPanel({
       }
     >
   >({});
-  const [year, setYear] = React.useState(() => {
+  const defaultYear = React.useMemo(() => {
     const current = currentMonthYyyyMmForMode(mode, zone);
-    return Number(current.split("-")[0]) || DateTime.now().setZone(zone).year;
-  });
+    return current.split("-")[0] || String(DateTime.now().setZone(zone).year);
+  }, [mode, zone]);
+
+  const [year, setYear] = React.useState<string>(defaultYear);
   const [periodOpen, setPeriodOpen] = React.useState(false);
   const [periodMode, setPeriodMode] = React.useState<"year" | "range">("year");
-  const [periodYear, setPeriodYear] = React.useState(() => {
-    const current = currentMonthYyyyMmForMode(mode, zone);
-    return Number(current.split("-")[0]) || DateTime.now().setZone(zone).year;
-  });
+  const [periodYear, setPeriodYear] = React.useState<string>(defaultYear);
   const [periodStartMonth, setPeriodStartMonth] = React.useState(() =>
     currentMonthYyyyMmForMode(mode, zone)
   );
@@ -172,8 +175,17 @@ export function WorkingHoursMonthPanel({
     currentMonthYyyyMmForMode(mode, zone)
   );
   const [mounted, setMounted] = React.useState(false);
+  const [isMobile, setIsMobile] = React.useState(false);
   const [downloading, setDownloading] = React.useState(false);
   const [savingEdits, setSavingEdits] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   const [downloadStatus, setDownloadStatus] = React.useState("");
   const [downloadDoneCount, setDownloadDoneCount] = React.useState(0);
@@ -194,9 +206,13 @@ export function WorkingHoursMonthPanel({
       setMonth((prev) => convertMonthMode(prev, prevModeRef.current, mode));
       setPeriodStartMonth((prev) => convertMonthMode(prev, prevModeRef.current, mode));
       setPeriodEndMonth((prev) => convertMonthMode(prev, prevModeRef.current, mode));
+      const current = currentMonthYyyyMmForMode(mode, zone);
+      const newY = current.split("-")[0] || String(DateTime.now().setZone(zone).year);
+      setYear(newY);
+      setPeriodYear(newY);
       prevModeRef.current = mode;
     }
-  }, [mode]);
+  }, [mode, zone]);
 
   const monthOptions = React.useMemo(() => {
     const now = DateTime.now().setZone(zone);
@@ -450,8 +466,10 @@ export function WorkingHoursMonthPanel({
       const u = auth.currentUser;
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
+      const targetYearNum = parseInt(year, 10) || parseInt(defaultYear, 10);
+      const targetYearStr = String(targetYearNum).padStart(4, "0");
       const months = Array.from({ length: 12 }, (_, i) =>
-        `${String(year).padStart(4, "0")}-${String(i + 1).padStart(2, "0")}`
+        `${targetYearStr}-${String(i + 1).padStart(2, "0")}`
       );
       const list: TeacherMonthData[] = [];
       let done = 0;
@@ -485,13 +503,14 @@ export function WorkingHoursMonthPanel({
 
       setDownloadStatus("Generating PDF...");
       const workerMeta = list[0]?.worker;
+      const modeSuffix = mode === "bs" ? "BS" : "AD";
       const doc = await generateTeacherAttendancePdf({
         monthsData: list,
-        titlePeriod: `${year}`,
+        titlePeriod: `${targetYearNum} ${modeSuffix}`,
         filePrefix: workerMeta?.employeeId ?? workerMeta?.id ?? "staff",
       });
       doc.save(
-        `MHMS-Teacher-Attendance-${workerMeta?.employeeId ?? workerMeta?.id ?? "staff"}-${year}.pdf`
+        `MHMS-Teacher-Attendance-${workerMeta?.employeeId ?? workerMeta?.id ?? "staff"}-${targetYearNum}-${modeSuffix}.pdf`
       );
       toast.success("Yearly Attendance PDF downloaded!");
     } catch (e) {
@@ -502,7 +521,7 @@ export function WorkingHoursMonthPanel({
       setDownloading(false);
       activeFetchControllerRef.current = null;
     }
-  }, [mode, workerId, year]);
+  }, [defaultYear, mode, workerId, year]);
 
   const downloadPeriodPdf = React.useCallback(async () => {
     cancelDownloadRef.current = false;
@@ -514,10 +533,12 @@ export function WorkingHoursMonthPanel({
       const u = auth.currentUser;
       if (!u) throw new Error("Not signed in");
       const token = await u.getIdToken();
+      const targetPeriodYearNum = parseInt(periodYear, 10) || parseInt(defaultYear, 10);
+      const targetPeriodYearStr = String(targetPeriodYearNum).padStart(4, "0");
       const months =
         periodMode === "year"
           ? Array.from({ length: 12 }, (_, i) =>
-              `${String(periodYear).padStart(4, "0")}-${String(i + 1).padStart(2, "0")}`
+              `${targetPeriodYearStr}-${String(i + 1).padStart(2, "0")}`
             )
           : (() => {
               const s = DateTime.fromFormat(periodStartMonth, "yyyy-MM", {
@@ -569,13 +590,14 @@ export function WorkingHoursMonthPanel({
       }
 
       setDownloadStatus("Generating PDF...");
+      const modeSuffix = mode === "bs" ? "BS" : "AD";
       const title =
         periodMode === "year"
-          ? `${periodYear}`
+          ? `${targetPeriodYearNum} ${modeSuffix}`
           : `${periodStartMonth} to ${periodEndMonth}`;
       const suffix =
         periodMode === "year"
-          ? `${periodYear}`
+          ? `${targetPeriodYearNum}-${modeSuffix}`
           : `${periodStartMonth}-${periodEndMonth}`;
       const workerMeta = list[0]?.worker;
       const doc = await generateTeacherAttendancePdf({
@@ -621,156 +643,267 @@ export function WorkingHoursMonthPanel({
           </p>
         ) : null}
 
-        {/* PDF Export Controls */}
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-          <label className="text-xs text-zinc-500 flex items-center">
-            Yearly PDF
+        {/* PDF Export Controls - single cohesive line for mobile & desktop */}
+        <div className="mt-3.5 flex items-center justify-between sm:justify-end gap-2 overflow-x-auto pb-0.5 no-scrollbar">
+          {/* Integrated Year PDF Control */}
+          <div className="inline-flex items-center rounded-xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.04] p-1 shadow-sm shrink-0">
             <input
-              type="number"
-              min={2000}
-              max={2100}
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               value={year}
-              onChange={(e) =>
-                setYear(Number(e.target.value) || new Date().getFullYear())
-              }
-              className="ml-2 w-24 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-white/15 dark:bg-zinc-950"
+              onChange={(e) => {
+                const val = e.target.value.replace(/\D/g, "").slice(0, 4);
+                setYear(val);
+              }}
+              onBlur={() => {
+                if (!year.trim()) {
+                  setYear(defaultYear);
+                }
+              }}
+              aria-label="Target Year"
+              title={mode === "bs" ? "Target Year (BS)" : "Target Year (AD)"}
+              placeholder={defaultYear}
+              className="w-14 rounded-lg bg-zinc-100 dark:bg-zinc-800 px-1 py-1 text-center text-xs font-bold text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
-          </label>
-          <Button
+            <button
+              type="button"
+              disabled={downloading}
+              onClick={() => void downloadYearPdf()}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/10 disabled:opacity-50 transition-colors cursor-pointer"
+            >
+              <Download className="size-3.5 text-blue-600 dark:text-blue-400" />
+              <span>Year PDF</span>
+            </button>
+          </div>
+
+          {/* Period-wise PDF Button */}
+          <button
             type="button"
-            variant="secondary"
-            disabled={downloading}
-            onClick={() => void downloadYearPdf()}
-            className="gap-1.5"
-          >
-            <Download className="size-3.5" />
-            {downloading ? "Preparing..." : "Download Year PDF"}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
             disabled={downloading}
             onClick={() => setPeriodOpen(true)}
-            className="gap-1.5"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.04] px-3 py-2 text-xs font-semibold text-zinc-700 dark:text-zinc-200 shadow-sm hover:bg-zinc-50 dark:hover:bg-white/10 disabled:opacity-50 transition-colors cursor-pointer shrink-0"
           >
-            <Calendar className="size-3.5" />
-            Period-wise PDF
-          </Button>
+            <Calendar className="size-3.5 text-blue-600 dark:text-blue-400" />
+            <span>Period-wise PDF</span>
+          </button>
         </div>
       </div>
 
-      {periodOpen && mounted && typeof document !== "undefined"
+      {/* Period Attendance PDF Modal (iOS Bottom Sheet on Mobile, Centered Modal on Desktop) */}
+      {mounted && typeof document !== "undefined"
         ? createPortal(
-            <div className="fixed inset-0 z-1360 flex items-center justify-center p-4">
-              <button
-                type="button"
-                className="absolute inset-0 bg-zinc-950/70 backdrop-blur-sm"
-                aria-label="Close period modal"
-                onClick={() => setPeriodOpen(false)}
-              />
-              <Card className="relative z-1 w-full max-w-md border border-white/10 bg-zinc-950 text-zinc-100 shadow-2xl">
-                <CardHeader>
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Download className="size-4 text-blue-400" />
-                    Download Attendance PDF
-                  </CardTitle>
-                  <CardDescription>
-                    Choose full calendar year or custom month range export.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={periodMode === "year" ? "default" : "secondary"}
-                      onClick={() => setPeriodMode("year")}
-                    >
-                      Full Year
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={periodMode === "range" ? "default" : "secondary"}
-                      onClick={() => setPeriodMode("range")}
-                    >
-                      Custom Range
-                    </Button>
-                  </div>
-                  {periodMode === "year" ? (
-                    <label className="block text-sm">
-                      <span className="mb-1 block text-zinc-400">Year</span>
-                      <input
-                        type="number"
-                        min={2000}
-                        max={2100}
-                        value={periodYear}
-                        onChange={(e) =>
-                          setPeriodYear(
-                            Number(e.target.value) || new Date().getFullYear()
-                          )
-                        }
-                        className="w-full rounded-xl border border-white/15 bg-zinc-900 px-3 py-2"
-                      />
-                    </label>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="block text-sm">
-                        <span className="mb-1 block text-zinc-400">From Month</span>
-                        <SearchableSelect
-                          value={periodStartMonth}
-                          onValueChange={setPeriodStartMonth}
-                          includeEmpty={false}
-                          options={monthOptions}
-                          searchPlaceholder="Search month..."
-                          triggerClassName="h-10 w-full rounded-xl border border-white/15 bg-zinc-900 px-3 text-sm text-zinc-100 hover:bg-zinc-900"
-                          popoverContentClassName="z-[1500] border-white/10 bg-zinc-950 text-zinc-100"
-                          listClassName="max-h-[min(260px,40vh)]"
-                        />
-                      </label>
-                      <label className="block text-sm">
-                        <span className="mb-1 block text-zinc-400">To Month</span>
-                        <SearchableSelect
-                          value={periodEndMonth}
-                          onValueChange={setPeriodEndMonth}
-                          includeEmpty={false}
-                          options={monthOptions}
-                          searchPlaceholder="Search month..."
-                          triggerClassName="h-10 w-full rounded-xl border border-white/15 bg-zinc-900 px-3 text-sm text-zinc-100 hover:bg-zinc-900"
-                          popoverContentClassName="z-[1500] border-white/10 bg-zinc-950 text-zinc-100"
-                          listClassName="max-h-[min(260px,40vh)]"
-                        />
-                      </label>
-                    </div>
+            <AnimatePresence>
+              {periodOpen && (
+                <div
+                  className={cn(
+                    "fixed inset-0 z-[10000]",
+                    isMobile
+                      ? "flex flex-col justify-end p-0"
+                      : "flex items-center justify-center p-4"
                   )}
-                  <div className="flex justify-end gap-2 pt-2">
-                    <Button
+                >
+                  {/* Backdrop */}
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                    onClick={() => !downloading && setPeriodOpen(false)}
+                    aria-hidden="true"
+                  />
+
+                  {/* Modal Container */}
+                  <motion.div
+                    initial={
+                      isMobile
+                        ? { y: "100%" }
+                        : { opacity: 0, scale: 0.95, y: 16 }
+                    }
+                    animate={
+                      isMobile ? { y: 0 } : { opacity: 1, scale: 1, y: 0 }
+                    }
+                    exit={
+                      isMobile
+                        ? { y: "100%" }
+                        : { opacity: 0, scale: 0.95, y: 16 }
+                    }
+                    transition={
+                      isMobile
+                        ? { type: "spring", damping: 28, stiffness: 280 }
+                        : { type: "spring", damping: 25, stiffness: 320 }
+                    }
+                    className={cn(
+                      "relative z-10 w-full max-h-[90dvh] flex flex-col border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden",
+                      isMobile ? "rounded-t-[28px]" : "max-w-md rounded-3xl"
+                    )}
+                  >
+                    {/* Close Button */}
+                    <button
                       type="button"
-                      variant="secondary"
                       onClick={() => setPeriodOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
                       disabled={downloading}
-                      onClick={() => void downloadPeriodPdf()}
+                      className="absolute top-4 right-4 z-20 flex size-8 items-center justify-center rounded-full border border-zinc-200 bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/15 dark:hover:text-zinc-100 cursor-pointer transition-colors disabled:opacity-50"
+                      aria-label="Close"
                     >
-                      {downloading ? "Preparing..." : "Download PDF"}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>,
+                      <X className="size-4" />
+                    </button>
+
+                    {/* Mobile drag handle */}
+                    {isMobile && (
+                      <div className="flex justify-center pt-3 pb-1">
+                        <div className="w-12 h-1.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                      </div>
+                    )}
+
+                    {/* Header */}
+                    <div className="p-5 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                          <Download className="size-4" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                            Download Attendance PDF
+                          </h3>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                            Choose full calendar year or custom month range export.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Body */}
+                    <div className="p-5 pt-2 space-y-4 overflow-y-auto">
+                      {/* Segmented Mode Toggle */}
+                      <div className="grid grid-cols-2 p-1 bg-zinc-100 dark:bg-white/[0.06] rounded-xl">
+                        <button
+                          type="button"
+                          onClick={() => setPeriodMode("year")}
+                          className={cn(
+                            "py-2 text-xs font-semibold rounded-lg transition-all text-center cursor-pointer",
+                            periodMode === "year"
+                              ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                              : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                          )}
+                        >
+                          Full Year
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPeriodMode("range")}
+                          className={cn(
+                            "py-2 text-xs font-semibold rounded-lg transition-all text-center cursor-pointer",
+                            periodMode === "range"
+                              ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                              : "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                          )}
+                        >
+                          Custom Range
+                        </button>
+                      </div>
+
+                      {periodMode === "year" ? (
+                        <div>
+                          <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                            Calendar Year
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={periodYear}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/\D/g, "").slice(0, 4);
+                              setPeriodYear(val);
+                            }}
+                            onBlur={() => {
+                              if (!periodYear.trim()) {
+                                setPeriodYear(defaultYear);
+                              }
+                            }}
+                            aria-label="Calendar Year"
+                            title={mode === "bs" ? "Calendar Year (BS)" : "Calendar Year (AD)"}
+                            placeholder={defaultYear}
+                            className="w-full rounded-xl border border-zinc-200 dark:border-white/15 bg-zinc-50 dark:bg-zinc-800/80 px-3.5 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors"
+                          />
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                              From Month
+                            </label>
+                            <AppSelect
+                              value={periodStartMonth}
+                              onChange={setPeriodStartMonth}
+                              options={monthOptions}
+                              drawerTitle="Select From Month"
+                              searchable={monthOptions.length > 4}
+                              searchPlaceholder="Search month..."
+                              placeholder="Select month..."
+                              className="h-11 rounded-xl"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                              To Month
+                            </label>
+                            <AppSelect
+                              value={periodEndMonth}
+                              onChange={setPeriodEndMonth}
+                              options={monthOptions}
+                              drawerTitle="Select To Month"
+                              searchable={monthOptions.length > 4}
+                              searchPlaceholder="Search month..."
+                              placeholder="Select month..."
+                              className="h-11 rounded-xl"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-100 dark:border-white/5">
+                        <button
+                          type="button"
+                          disabled={downloading}
+                          onClick={() => setPeriodOpen(false)}
+                          className="px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-white/10 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 dark:bg-white/10 dark:text-zinc-300 dark:hover:bg-white/15 text-xs font-semibold transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={downloading}
+                          onClick={() => void downloadPeriodPdf()}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-md shadow-blue-500/20 disabled:opacity-50 transition-all active:scale-[0.98] cursor-pointer"
+                        >
+                          {downloading ? (
+                            <>
+                              <Loader2 className="size-3.5 animate-spin" />
+                              <span>Preparing...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download className="size-3.5" />
+                              <span>Download PDF</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                </div>
+              )}
+            </AnimatePresence>,
             document.body
           )
         : null}
 
       {loading && !data ? (
-        <div className="space-y-4">
-          <Skeleton className="h-24 w-full rounded-xl" />
-          <Skeleton className="h-64 w-full rounded-xl" />
-        </div>
+        <WorkingHoursSkeleton />
       ) : null}
 
       {data ? (

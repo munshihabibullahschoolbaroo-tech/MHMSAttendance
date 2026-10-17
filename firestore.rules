@@ -69,6 +69,17 @@ service cloud.firestore {
       );
     }
 
+    // --- TEACHER STAFF SESSIONS (PRIMARY MHMS ATTENDANCE) ---
+    match /teacherSessions/{docId} {
+      allow read: if signedIn() && (
+        resource.data.teacherId == request.auth.uid || isAdmin()
+      );
+      allow create, update: if signedIn() && (
+        request.resource.data.teacherId == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
     // --- SCHOOL CAMPUS & WING CONFIGURATION ---
     match /schoolConfig/{docId} {
       allow read: if signedIn();

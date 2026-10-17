@@ -3,8 +3,23 @@ import { adminDb } from "@/lib/firebase/admin";
 
 export const runtime = "nodejs";
 
+let cachedPositionsStatus: any = null;
+let cachedPositionsExpiresAt = 0;
+
+function invalidatePositionsStatusCache() {
+  cachedPositionsStatus = null;
+  cachedPositionsExpiresAt = 0;
+}
+
 /** GET /api/school/positions-status - Counts existing assigned capped positions */
 export async function GET() {
+  const now = Date.now();
+  if (cachedPositionsStatus && now < cachedPositionsExpiresAt) {
+    return NextResponse.json(cachedPositionsStatus, {
+      headers: { "Cache-Control": "private, max-age=15, stale-while-revalidate=60" },
+    });
+  }
+
   try {
     const db = adminDb();
     const usersSnap = await db.collection("users").get();
@@ -152,12 +167,19 @@ export async function GET() {
       /* ignore */
     }
 
-    return NextResponse.json({
+    const payload = {
       principalTaken: principalCount >= 1,
       vicePrincipalCount,
       vicePrincipalFull: vicePrincipalCount >= 2,
       inchargeTaken: inchargeCount >= 1,
       assignedClasses,
+    };
+
+    cachedPositionsStatus = payload;
+    cachedPositionsExpiresAt = Date.now() + 20_000;
+
+    return NextResponse.json(payload, {
+      headers: { "Cache-Control": "private, max-age=15, stale-while-revalidate=60" },
     });
   } catch (e) {
     return NextResponse.json({

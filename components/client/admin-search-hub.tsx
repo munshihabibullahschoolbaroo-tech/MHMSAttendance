@@ -25,9 +25,12 @@ type UserRow = {
   designation?: string;
 };
 
+let cachedSearchUsers: UserRow[] | null = null;
+let cachedSearchUsersAt = 0;
+
 export function AdminSearchHub() {
-  const [users, setUsers] = React.useState<UserRow[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  const [users, setUsers] = React.useState<UserRow[]>(() => cachedSearchUsers ?? []);
+  const [loading, setLoading] = React.useState(() => !cachedSearchUsers);
   const [err, setErr] = React.useState<string | null>(null);
   const [qWorker, setQWorker] = React.useState("");
   const [workerModal, setWorkerModal] = React.useState<UserRow | null>(null);
@@ -35,7 +38,10 @@ export function AdminSearchHub() {
   React.useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      setLoading(true);
+      // If we don't have cached users, show skeleton loading
+      if (!cachedSearchUsers) {
+        setLoading(true);
+      }
       setErr(null);
       try {
         const auth = getFirebaseAuth();
@@ -48,9 +54,12 @@ export function AdminSearchHub() {
         const uData = (await uRes.json()) as { users?: UserRow[]; error?: string };
         if (!uRes.ok) throw new Error(uData.error ?? "Failed to load users");
         if (cancelled) return;
-        setUsers(uData.users ?? []);
+        const list = uData.users ?? [];
+        cachedSearchUsers = list;
+        cachedSearchUsersAt = Date.now();
+        setUsers(list);
       } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : "Failed");
+        if (!cancelled && !cachedSearchUsers) setErr(e instanceof Error ? e.message : "Failed");
       } finally {
         if (!cancelled) setLoading(false);
       }

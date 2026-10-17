@@ -29,9 +29,13 @@ export async function GET() {
   try {
     const db = adminDb();
     const config = await getSchoolConfig(db);
-    return NextResponse.json(config);
+    return NextResponse.json(config, {
+      headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=300" },
+    });
   } catch (e) {
-    return NextResponse.json(DEFAULT_SCHOOL_CONFIG);
+    return NextResponse.json(DEFAULT_SCHOOL_CONFIG, {
+      headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=60" },
+    });
   }
 }
 
