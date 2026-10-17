@@ -4,6 +4,7 @@ import { adminDb } from "@/lib/firebase/admin";
 import { jsonError } from "@/lib/api/json-error";
 import { claimEmployeeId } from "@/lib/employee-id/allocator";
 import { createNotification } from "@/lib/notifications/create-notification";
+import { getSuperAdminEmail } from "@/lib/constants";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -41,9 +42,17 @@ export async function POST(req: Request) {
     const db = adminDb();
     const userRef = db.collection("users").doc(auth.decoded.uid);
     const userSnap = await userRef.get();
-    if (!userSnap.exists) return jsonError("User profile not found", 404);
+    const userExists = userSnap.exists;
 
-    const role = String(userSnap.get("role") ?? "employee");
+    const superEmail = getSuperAdminEmail();
+    const isSuper = Boolean(
+      superEmail &&
+      auth.decoded.email &&
+      auth.decoded.email.trim().toLowerCase() === superEmail
+    );
+    const role = userExists
+      ? String(userSnap.get("role") ?? (isSuper ? "super_admin" : "employee"))
+      : (isSuper ? "super_admin" : "employee");
 
     // Position quota check across school:
     const posNormalized = position.toLowerCase().trim();
@@ -108,12 +117,14 @@ export async function POST(req: Request) {
       }
     }
 
-    let employeeId = userSnap.get("employeeId");
+    let employeeId = userExists ? userSnap.get("employeeId") : undefined;
     if (role === "employee" && (typeof employeeId !== "string" || !employeeId.trim())) {
       employeeId = await claimEmployeeId(db);
     }
 
-    const existingAccess = userSnap.get("workspaceAccessStatus") as string | undefined;
+    const existingAccess = userExists
+      ? (userSnap.get("workspaceAccessStatus") as string | undefined)
+      : undefined;
     const needsLoginApproval =
       role === "employee" && existingAccess !== "approved" && existingAccess !== "rejected";
 
@@ -123,15 +134,16 @@ export async function POST(req: Request) {
 
     const resolvedName =
       (typeof name === "string" && name.trim()) ||
-      (typeof userSnap.get("name") === "string" && String(userSnap.get("name")).trim()) ||
+      (userExists && typeof userSnap.get("name") === "string" && String(userSnap.get("name")).trim()) ||
       auth.decoded.name ||
       auth.decoded.email?.split("@")[0] ||
       "Staff Member";
 
     const resolvedEmail =
       auth.decoded.email ||
-      (typeof userSnap.get("email") === "string" ? String(userSnap.get("email")) : "");
+      (userExists && typeof userSnap.get("email") === "string" ? String(userSnap.get("email")) : "");
 
+    const now = new Date();
     await userRef.set(
       {
         name: resolvedName,
@@ -145,8 +157,17 @@ export async function POST(req: Request) {
         schoolClassId: isClassTeacher ? (schoolClassId ?? null) : null,
         schoolSectionId: isClassTeacher ? (schoolSectionId ?? null) : null,
         ...(typeof employeeId === "string" && employeeId.trim() ? { employeeId } : {}),
-        onboardingCompletedAt: new Date(),
+        onboardingCompletedAt: now,
         onboarded: true,
+        assignedSites:
+          userExists && Array.isArray(userSnap.get("assignedSites"))
+            ? userSnap.get("assignedSites")
+            : [],
+        timeZone:
+          userExists && typeof userSnap.get("timeZone") === "string"
+            ? userSnap.get("timeZone")
+            : "Asia/Kolkata",
+        ...(!userExists ? { createdAt: now } : {}),
         ...(needsLoginApproval ? { workspaceAccessStatus: "pending" as const } : {}),
       },
       { merge: true }
@@ -167,7 +188,7 @@ export async function POST(req: Request) {
           .where("role", "in", ["admin", "super_admin"])
           .get();
         const teacherLabel =
-          (typeof userSnap.get("name") === "string" && String(userSnap.get("name")).trim()) ||
+          resolvedName ||
           auth.decoded.email ||
           auth.decoded.uid;
 

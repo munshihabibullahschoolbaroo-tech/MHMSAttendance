@@ -5,6 +5,7 @@ import { doc, onSnapshot, updateDoc } from "firebase/firestore";
 import * as React from "react";
 import { getFirebaseAuth, getFirebaseDb } from "@/lib/firebase/client";
 import { normalizeTimeZoneId } from "@/lib/date/time-zone";
+import { ensureEmployeeUserDoc } from "@/lib/firebase/ensure-employee-user-doc";
 
 export type DashboardUser = {
   uid: string;
@@ -87,6 +88,11 @@ export function DashboardUserProvider({ children }: { children: React.ReactNode 
           const email = u.email;
           const data = snap.data();
           const name = (data?.name as string) || email?.split("@")[0] || "User";
+
+          // If user document does not exist yet, proactively ensure it
+          if (!snap.exists() && email) {
+            ensureEmployeeUserDoc(u, name).catch(() => {});
+          }
           const photoUrl =
             (typeof data?.photoUrl === "string" && data.photoUrl ? data.photoUrl : null) ||
             u.photoURL ||

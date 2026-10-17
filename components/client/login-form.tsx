@@ -95,10 +95,16 @@ export function LoginForm() {
   // If already authenticated, directly navigate to dashboard
   React.useEffect(() => {
     const auth = getFirebaseAuth();
-    const unsub = onAuthStateChanged(auth, (u) => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
       if (u) {
         saveAccountToRecent(u);
         setRedirecting(true);
+        try {
+          const name = u.displayName ?? u.email?.split("@")[0] ?? "Teacher";
+          await ensureEmployeeUserDoc(u, name);
+        } catch {
+          /* ignore */
+        }
         window.location.href = "/dashboard";
       }
     });
