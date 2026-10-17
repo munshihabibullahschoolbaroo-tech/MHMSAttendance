@@ -2,11 +2,10 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { signOut } from "firebase/auth";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronDown, LogOut, Settings } from "lucide-react";
 import { UserAvatar } from "@/components/client/user-avatar";
-import { getFirebaseAuth } from "@/lib/firebase/client";
+import { performSignOut } from "@/components/client/auth-sign-out-overlay";
 import { cn } from "@/lib/utils";
 import type { DashboardUser } from "@/components/client/dashboard-user-context";
 
@@ -68,7 +67,7 @@ export function UserAccountDropdown({
             )}
             onSelect={(e) => {
               e.preventDefault();
-              void signOut(getFirebaseAuth());
+              void performSignOut();
             }}
           >
             <LogOut className="size-4" aria-hidden />

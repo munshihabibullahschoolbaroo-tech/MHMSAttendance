@@ -903,7 +903,7 @@ export function WorkingHoursMonthPanel({
         : null}
 
       {loading && !data ? (
-        <WorkingHoursSkeleton />
+        <WorkingHoursSkeleton hideControls />
       ) : null}
 
       {data ? (

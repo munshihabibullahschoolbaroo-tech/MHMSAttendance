@@ -367,27 +367,35 @@ export function MissedAttendanceSkeleton() {
 }
 
 /** Working Hours & Attendance Summary Skeleton */
-export function WorkingHoursSkeleton() {
+export function WorkingHoursSkeleton({
+  hideControls = false,
+}: {
+  hideControls?: boolean;
+} = {}) {
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
-      {/* Month Picker Card Skeleton */}
-      <div className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 shadow-sm flex items-center justify-between gap-4 max-w-md">
-        <div className="flex items-center gap-4 min-w-0 flex-1">
-          <Skeleton className="size-12 rounded-xl shrink-0" />
-          <div className="space-y-1.5 min-w-0 flex-1">
-            <Skeleton className="h-3 w-16 rounded" />
-            <Skeleton className="h-5 w-36 rounded" />
-            <Skeleton className="h-3 w-28 rounded" />
+      {!hideControls && (
+        <>
+          {/* Month Picker Card Skeleton */}
+          <div className="rounded-2xl border border-zinc-200/90 dark:border-white/10 bg-white dark:bg-white/[0.03] p-4 shadow-sm flex items-center justify-between gap-4 max-w-md">
+            <div className="flex items-center gap-4 min-w-0 flex-1">
+              <Skeleton className="size-12 rounded-xl shrink-0" />
+              <div className="space-y-1.5 min-w-0 flex-1">
+                <Skeleton className="h-3 w-16 rounded" />
+                <Skeleton className="h-5 w-36 rounded" />
+                <Skeleton className="h-3 w-28 rounded" />
+              </div>
+            </div>
+            <Skeleton className="size-5 rounded shrink-0" />
           </div>
-        </div>
-        <Skeleton className="size-5 rounded shrink-0" />
-      </div>
 
-      {/* Single-line PDF Export Controls Skeleton */}
-      <div className="flex items-center justify-end gap-2">
-        <Skeleton className="h-9 w-32 rounded-xl" />
-        <Skeleton className="h-9 w-36 rounded-xl" />
-      </div>
+          {/* Single-line PDF Export Controls Skeleton */}
+          <div className="flex items-center justify-end gap-2">
+            <Skeleton className="h-9 w-32 rounded-xl" />
+            <Skeleton className="h-9 w-36 rounded-xl" />
+          </div>
+        </>
+      )}
 
       {/* 5 KPI Cards Skeleton */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5 sm:gap-4 my-6">

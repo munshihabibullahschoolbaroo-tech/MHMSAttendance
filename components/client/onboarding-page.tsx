@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { signOut } from "firebase/auth";
+import { performSignOut } from "@/components/client/auth-sign-out-overlay";
 import {
   GraduationCap,
   Baby,
@@ -274,11 +274,7 @@ export function OnboardingPage() {
           <MtesBrandLockup variant="header" showLogo={true} showVendor={true} />
           <button
             type="button"
-            onClick={async () => {
-              const auth = getFirebaseAuth();
-              await signOut(auth);
-              window.location.href = "/login";
-            }}
+            onClick={() => void performSignOut()}
             className="text-[11px] text-zinc-500 hover:text-red-600 dark:hover:text-red-400 flex items-center gap-1 font-medium px-2.5 py-1 rounded-full border border-zinc-200/80 dark:border-white/10 bg-white/70 dark:bg-zinc-900/70 backdrop-blur-sm cursor-pointer shadow-2xs shrink-0"
           >
             <LogOut className="size-3" />
@@ -306,11 +302,7 @@ export function OnboardingPage() {
         <MtesBrandLockup variant="header" showLogo={true} showVendor={true} />
         <button
           type="button"
-          onClick={async () => {
-            const auth = getFirebaseAuth();
-            await signOut(auth);
-            window.location.href = "/login";
-          }}
+          onClick={() => void performSignOut()}
           className="text-xs text-zinc-500 hover:text-red-600 dark:hover:text-red-400 flex items-center gap-1.5 font-medium px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-white/10 hover:border-red-500/30 transition-colors cursor-pointer bg-white/70 dark:bg-zinc-900/70 backdrop-blur-sm shadow-2xs"
         >
           <LogOut className="size-3.5" />

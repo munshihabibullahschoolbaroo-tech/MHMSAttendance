@@ -1,6 +1,5 @@
 "use client";
 
-import { signOut } from "firebase/auth";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as React from "react";
@@ -13,6 +12,7 @@ import {
   Home,
   LayoutDashboard,
   LogOut,
+  Loader2,
   Settings,
   ChevronDown,
   ChevronUp,
@@ -31,7 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/client/theme-toggle";
-import { getFirebaseAuth } from "@/lib/firebase/client";
+import { performSignOut } from "@/components/client/auth-sign-out-overlay";
 import { MtesBrandLockup } from "@/components/client/mtes-brand-lockup";
 import { MhmsMark } from "@/components/mhms-mark";
 import { useDashboardUser } from "@/components/client/dashboard-user-context";
@@ -55,6 +55,13 @@ export function DashboardSidebar({
   const [employeeSectionOpen, setEmployeeSectionOpen] = React.useState(false);
   const [adminSectionOpen, setAdminSectionOpen] = React.useState(true);
   const [mounted, setMounted] = React.useState(false);
+  const [signingOut, setSigningOut] = React.useState(false);
+
+  const handleSignOut = React.useCallback(() => {
+    if (signingOut) return;
+    setSigningOut(true);
+    void performSignOut();
+  }, [signingOut]);
 
   React.useEffect(() => {
     setMounted(true);
@@ -409,14 +416,19 @@ export function DashboardSidebar({
                 type="button"
                 variant="secondary"
                 size="icon"
-                className="size-9 rounded-xl text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400 cursor-pointer"
+                disabled={signingOut}
+                className="size-9 rounded-xl text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400 cursor-pointer disabled:opacity-50"
                 aria-label="Sign out"
-                onClick={() => void signOut(getFirebaseAuth())}
+                onClick={handleSignOut}
               >
-                <LogOut className="size-4" />
+                {signingOut ? (
+                  <Loader2 className="size-4 animate-spin text-amber-500" />
+                ) : (
+                  <LogOut className="size-4" />
+                )}
               </Button>
               <span className="pointer-events-none fixed left-[76px] z-[100050] hidden whitespace-nowrap rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white shadow-2xl group-hover:block dark:bg-zinc-100 dark:text-zinc-900 border border-zinc-700/60 dark:border-zinc-300">
-                Sign out
+                {signingOut ? "Signing out…" : "Sign out"}
               </span>
             </div>
           </div>
@@ -430,11 +442,16 @@ export function DashboardSidebar({
             <Button
               type="button"
               variant="secondary"
-              className="w-full justify-start gap-2 rounded-xl"
-              onClick={() => void signOut(getFirebaseAuth())}
+              disabled={signingOut}
+              className="w-full justify-start gap-2 rounded-xl text-zinc-700 dark:text-zinc-300 hover:text-red-600 dark:hover:text-red-400 cursor-pointer disabled:opacity-50"
+              onClick={handleSignOut}
             >
-              <LogOut className="size-4" />
-              Sign out
+              {signingOut ? (
+                <Loader2 className="size-4 animate-spin text-amber-500" />
+              ) : (
+                <LogOut className="size-4" />
+              )}
+              {signingOut ? "Signing out…" : "Sign out"}
             </Button>
           </div>
         )}
@@ -502,14 +519,19 @@ export function DashboardSidebar({
                     <Button
                       type="button"
                       variant="secondary"
-                      className="w-full justify-start gap-2 rounded-xl"
+                      disabled={signingOut}
+                      className="w-full justify-start gap-2 rounded-xl text-zinc-700 dark:text-zinc-300 hover:text-red-600 dark:hover:text-red-400 cursor-pointer disabled:opacity-50"
                       onClick={() => {
                         onCloseMobile();
-                        void signOut(getFirebaseAuth());
+                        handleSignOut();
                       }}
                     >
-                      <LogOut className="size-4" />
-                      Sign out
+                      {signingOut ? (
+                        <Loader2 className="size-4 animate-spin text-amber-500" />
+                      ) : (
+                        <LogOut className="size-4" />
+                      )}
+                      {signingOut ? "Signing out…" : "Sign out"}
                     </Button>
                   </div>
                 </motion.aside>

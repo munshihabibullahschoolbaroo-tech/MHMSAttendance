@@ -1,10 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { Clock, Loader2, LogOut, RefreshCw, ShieldAlert, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { performSignOut } from "@/components/client/auth-sign-out-overlay";
 import {
   Card,
   CardContent,
@@ -163,7 +163,7 @@ export default function WaitingApprovalPage() {
               type="button"
               variant="outline"
               className="w-full border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:bg-zinc-800 hover:text-white text-xs h-10 gap-2 cursor-pointer"
-              onClick={() => void signOut(getFirebaseAuth())}
+              onClick={() => void performSignOut()}
             >
               <LogOut className="size-4" />
               Sign out
